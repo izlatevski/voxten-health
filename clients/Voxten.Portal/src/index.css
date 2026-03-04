@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 200 20% 98%;
+    --foreground: 215 28% 17%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 215 28% 17%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 28% 17%;
+
+    --primary: 201 60% 27%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 146 51% 35%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 20% 96%;
+    --accent-foreground: 215 28% 17%;
+
+    --destructive: 0 74% 35%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 32 87% 37%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 201 60% 27%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 201 60% 27%;
+    --sidebar-foreground: 201 20% 90%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 201 60% 27%;
+    --sidebar-accent: 201 55% 22%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 201 50% 32%;
+    --sidebar-ring: 146 51% 35%;
+    --sidebar-muted: 201 30% 60%;
+
+    --stat: 0 74% 35%;
+    --stat-foreground: 0 0% 100%;
+    --urgent: 32 87% 37%;
+    --urgent-foreground: 0 0% 100%;
+    --routine: 146 51% 35%;
+    --routine-foreground: 0 0% 100%;
+
+    --success: 146 51% 35%;
+    --success-foreground: 0 0% 100%;
+
+    --clinical-banner: 201 60% 27%;
+    --clinical-banner-foreground: 0 0% 100%;
+
+    --ehr-fhir: 217 91% 60%;
+    --ehr-fhir-foreground: 0 0% 100%;
+    --ehr-critical: 0 72% 51%;
+    --ehr-warning: 38 92% 50%;
+    --ehr-info: 217 91% 60%;
+    --ehr-part2: 263 70% 58%;
+    --ehr-connected: 160 84% 39%;
+    --ehr-offline: 0 72% 51%;
+
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  .dark {
+    --background: 215 28% 10%;
+    --foreground: 210 20% 96%;
+
+    --card: 215 28% 14%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 215 28% 14%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: 201 50% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 146 40% 40%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 215 20% 18%;
+    --muted-foreground: 215 16% 60%;
+
+    --accent: 215 20% 18%;
+    --accent-foreground: 210 20% 96%;
+
+    --destructive: 0 62% 40%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 20% 22%;
+    --input: 215 20% 22%;
+    --ring: 201 50% 45%;
+
+    --sidebar-background: 215 28% 10%;
+    --sidebar-foreground: 210 20% 90%;
+    --sidebar-primary: 201 50% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 25% 16%;
+    --sidebar-accent-foreground: 210 20% 96%;
+    --sidebar-border: 215 20% 22%;
+    --sidebar-ring: 146 40% 40%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+@layer utilities {
+  .clinical-shadow {
+    box-shadow: 0 1px 3px 0 hsl(215 28% 17% / 0.06), 0 1px 2px -1px hsl(215 28% 17% / 0.06);
+  }
+  .clinical-shadow-md {
+    box-shadow: 0 4px 6px -1px hsl(215 28% 17% / 0.07), 0 2px 4px -2px hsl(215 28% 17% / 0.05);
+  }
+}

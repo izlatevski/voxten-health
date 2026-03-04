@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Node / React
+node_modules/
+dist/
+build/
+coverage/
+.npm/
+.pnpm-store/
+.parcel-cache/
+.vite/
+*.tsbuildinfo
+
+# .NET / Azure Functions
+bin/
+obj/
+TestResults/
+
+# Azure Functions local settings
+local.settings.json
+
+# Temporary
+.tmp/
+tmp/
