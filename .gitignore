@@ -24,6 +24,7 @@ yarn-error.log*
 
 # Node / React
 node_modules/
+clients/Voxten.Portal/package-lock.json
 dist/
 build/
 coverage/
@@ -37,6 +38,7 @@ coverage/
 bin/
 obj/
 TestResults/
+**/appsettings.Development.json
 
 # Azure Functions local settings
 local.settings.json
@@ -44,3 +46,6 @@ local.settings.json
 # Temporary
 .tmp/
 tmp/
+
+# Local tools
+tools/Voxten.ThreadCleanup/

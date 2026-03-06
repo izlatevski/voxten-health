@@ -1,0 +1,39 @@
+@baseUrl = http://localhost:5007
+
+GET {{baseUrl}}/healthz
+Accept: application/json
+
+###
+
+POST {{baseUrl}}/api/chat/tokens
+Content-Type: application/json
+
+{
+  "includeVoip": true,
+  "tenantId": "ec1e87b2-c0e8-4d20-9649-d98a06a648f5",
+  "entraUserId": "71cb0a57-659e-4ca6-815c-8114bfae87e4"
+}
+
+###
+
+POST {{baseUrl}}/api/chat/threads
+Content-Type: application/json
+
+{
+  "creatorToken": "<acs_user_token>",
+  "topic": "Critical Lab - K+ 6.8 Escalation",
+  "tenantId": "ec1e87b2-c0e8-4d20-9649-d98a06a648f5",
+  "participants": [
+    {
+      "communicationUserId": "8:acs:...",
+      "entraUserId": "71cb0a57-659e-4ca6-815c-8114bfae87e4",
+      "displayName": "Ivan Zlatevski",
+      "role": "Admin"
+    }
+  ]
+}
+
+###
+
+GET {{baseUrl}}/api/users/71cb0a57-659e-4ca6-815c-8114bfae87e4/threads?tenantId=ec1e87b2-c0e8-4d20-9649-d98a06a648f5&pageSize=20
+Accept: application/json

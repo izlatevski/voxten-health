@@ -14,6 +14,18 @@ export interface Persona {
   shortLabel: string;
 }
 
+export interface CurrentUser {
+  displayName: string;
+  email: string;
+  roles: string[];
+  scopes: string[];
+  jobTitle?: string;
+  username?: string;
+  oid?: string;
+  tenantId?: string;
+  initials: string;
+}
+
 export const personas: Record<PersonaId, Persona> = {
   patricia: {
     id: 'patricia',
@@ -73,6 +85,8 @@ interface AppState {
   toggleSidebar: () => void;
   isLoggedIn: boolean;
   setLoggedIn: (v: boolean) => void;
+  currentUser: CurrentUser | null;
+  setCurrentUser: (user: CurrentUser | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -84,4 +98,6 @@ export const useAppStore = create<AppState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   isLoggedIn: false,
   setLoggedIn: (v) => set({ isLoggedIn: v }),
+  currentUser: null,
+  setCurrentUser: (user) => set({ currentUser: user }),
 }));

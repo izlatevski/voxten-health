@@ -1,24 +1,27 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAppStore } from '@/stores/appStore';
-import { Shield, Lock } from 'lucide-react';
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useIsAuthenticated, useMsal } from "@azure/msal-react";
+import { Shield, Lock } from "lucide-react";
+import { isEntraConfigured, loginRequest } from "@/auth/entra";
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const setLoggedIn = useAppStore((s) => s.setLoggedIn);
   const navigate = useNavigate();
+  const isAuthenticated = useIsAuthenticated();
+  const { instance } = useMsal();
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoggedIn(true);
-    navigate('/dashboard');
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  const signIn = async () => {
+    await instance.loginRedirect(loginRequest);
   };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
-        {/* Logo */}
         <div className="text-center">
           <div className="w-14 h-14 rounded-xl bg-primary flex items-center justify-center mx-auto mb-4">
             <span className="text-primary-foreground font-bold text-xl">V</span>
@@ -27,37 +30,19 @@ export default function Login() {
           <p className="text-sm text-muted-foreground mt-1">Healthcare Communication Compliance Platform</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-foreground block mb-1.5">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="clinician@hospital.org"
-              className="w-full px-3 py-2.5 rounded-lg border border-input bg-card text-foreground text-sm outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
-            />
+        {!isEntraConfigured ? (
+          <div className="rounded-lg border border-stat/20 bg-stat/10 p-4 text-sm text-stat">
+            Entra ID is not configured. Set `VITE_ENTRA_CLIENT_ID` and tenant settings in your `.env` file.
           </div>
-          <div>
-            <label className="text-sm font-medium text-foreground block mb-1.5">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
-              className="w-full px-3 py-2.5 rounded-lg border border-input bg-card text-foreground text-sm outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
-            />
-          </div>
+        ) : (
           <button
-            type="submit"
+            onClick={signIn}
             className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors"
           >
-            Secure Login
+            Sign In with Microsoft
           </button>
-        </form>
+        )}
 
-        {/* Badges */}
         <div className="space-y-2">
           <div className="flex items-center justify-center gap-2 text-success">
             <Shield className="w-4 h-4" />
@@ -65,11 +50,8 @@ export default function Login() {
           </div>
           <div className="flex items-center justify-center gap-2 text-muted-foreground">
             <Lock className="w-4 h-4" />
-            <span className="text-xs">Multi-Factor Authentication Required</span>
+            <span className="text-xs">Authentication handled by Microsoft Entra ID</span>
           </div>
-          <p className="text-[10px] text-center text-muted-foreground/60">
-            Password requirements: 12+ characters, uppercase, lowercase, number, special character
-          </p>
         </div>
       </div>
     </div>

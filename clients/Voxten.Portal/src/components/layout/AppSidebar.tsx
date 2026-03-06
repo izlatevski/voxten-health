@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { useAppStore, personas, personaOrder } from '@/stores/appStore';
+import { useAppStore } from '@/stores/appStore';
 import { useEHRStore } from '@/stores/ehrStore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -41,11 +41,15 @@ interface NavGroup {
 }
 
 export function AppSidebar() {
-  const { sidebarCollapsed, toggleSidebar, currentPersona } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, currentUser } = useAppStore();
   const { alerts } = useEHRStore();
   const location = useLocation();
   const navigate = useNavigate();
-  const persona = personas[currentPersona];
+  const displayName = currentUser?.displayName || 'Entra User';
+  const displayRole = currentUser?.roles[0]
+    ? currentUser.roles[0]
+    : currentUser?.jobTitle || 'Authenticated User';
+  const displayInitials = currentUser?.initials || 'EU';
 
   const activeAlerts = alerts.filter((a) => !a.collapsed && !a.acknowledged).length;
 
@@ -196,11 +200,11 @@ export function AppSidebar() {
         {!sidebarCollapsed && (
           <div className="flex items-center gap-2 px-2 py-1.5 mb-1.5">
             <div className="w-6 h-6 rounded-full bg-sidebar-accent flex items-center justify-center flex-shrink-0">
-              <span className="text-sidebar-accent-foreground text-[9px] font-semibold">{persona.initials}</span>
+              <span className="text-sidebar-accent-foreground text-[9px] font-semibold">{displayInitials}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-sidebar-primary truncate">{persona.name}</p>
-              <p className="text-[9px] text-sidebar-muted truncate">{persona.shortLabel}</p>
+              <p className="text-[11px] font-medium text-sidebar-primary truncate">{displayName}</p>
+              <p className="text-[9px] text-sidebar-muted truncate">{displayRole}</p>
             </div>
           </div>
         )}
