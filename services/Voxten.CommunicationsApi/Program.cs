@@ -134,9 +134,9 @@ static void AddAzureKeyVaultIfConfigured(WebApplicationBuilder builder)
         return;
     }
 
-    var tenantId = builder.Configuration["Authority:TenantId"];
-    var clientId = builder.Configuration["Authority:ClientId"];
-    var clientSecret = builder.Configuration["Authority:Secret"];
+    var tenantId = builder.Configuration["Authentication:TenantId"];
+    var clientId = builder.Configuration["Authentication:ClientId"];
+    var clientSecret = builder.Configuration["Authentication:Secret"];
 
     TokenCredential credential;
     if (!string.IsNullOrWhiteSpace(tenantId)
