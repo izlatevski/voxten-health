@@ -17,15 +17,15 @@ public sealed class IssueTokenResponse
 
 public sealed class CreateThreadRequest
 {
-    public string CreatorToken { get; set; } = string.Empty;
+    public string? CreatorToken { get; set; }
     public string Topic { get; set; } = string.Empty;
-    public string TenantId { get; set; } = string.Empty;
+    public string? TenantId { get; set; }
     public List<ThreadParticipantInput> Participants { get; set; } = [];
 }
 
 public sealed class ThreadParticipantInput
 {
-    public string CommunicationUserId { get; set; } = string.Empty;
+    public string? CommunicationUserId { get; set; }
     public string? EntraUserId { get; set; }
     public string? DisplayName { get; set; }
     public string? Role { get; set; }
@@ -44,7 +44,7 @@ public sealed class ChatThreadSummary
 
 public sealed class SendChatMessageRequest
 {
-    public string SenderToken { get; set; } = string.Empty;
+    public string? SenderToken { get; set; }
     public string ThreadId { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string? SenderDisplayName { get; set; }
@@ -116,4 +116,14 @@ public sealed class ThreadParticipantModel
     public string DisplayName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public DateTimeOffset JoinedUtc { get; set; }
+}
+
+public sealed class ThreadMetadataModel
+{
+    public string TenantId { get; set; } = string.Empty;
+    public string ThreadId { get; set; } = string.Empty;
+    public string Topic { get; set; } = string.Empty;
+    public string CreatedByEntraUserId { get; set; } = string.Empty;
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
 }

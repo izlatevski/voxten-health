@@ -2,7 +2,10 @@ using Azure;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using Voxten.CommunicationsApi.Hubs;
 using Voxten.CommunicationsApi.Models;
+using Voxten.CommunicationsApi.Realtime;
 using Voxten.CommunicationsApi.Repositories;
 using Voxten.CommunicationsApi.Services;
 
@@ -13,7 +16,8 @@ namespace Voxten.CommunicationsApi.Controllers;
 [Authorize]
 public sealed class CommunicationsController(
     AcsChatService chatService,
-    CommunicationIndexRepository indexRepository) : ControllerBase
+    CommunicationIndexRepository indexRepository,
+    IHubContext<ThreadsHub> threadsHub) : ControllerBase
 {
     [HttpPost("chat/tokens")]
     public async Task<IActionResult> IssueToken([FromBody] IssueTokenRequest request, CancellationToken ct)
@@ -139,6 +143,42 @@ public sealed class CommunicationsController(
         return Ok(new { items });
     }
 
+    [HttpGet("threads/{threadId}/metadata")]
+    public async Task<IActionResult> GetThreadMetadata([FromRoute] string threadId, [FromQuery] string tenantId, CancellationToken ct = default)
+    {
+        if (!HasTenantAccess(tenantId))
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return BadRequest(new { error = "tenantId is required." });
+        }
+
+        var callerOid = GetCallerOid();
+        if (string.IsNullOrWhiteSpace(callerOid))
+        {
+            return Forbid();
+        }
+
+        var participants = await indexRepository.GetThreadParticipantsAsync(tenantId, threadId, ct);
+        var isParticipant = participants.Any(participant =>
+            string.Equals(participant.EntraUserId, callerOid, StringComparison.OrdinalIgnoreCase));
+        if (!isParticipant && !IsPrivilegedCaller())
+        {
+            return Forbid();
+        }
+
+        var metadata = await indexRepository.GetThreadMetadataAsync(tenantId, threadId, ct);
+        if (metadata is null)
+        {
+            return NotFound(new { error = "Thread metadata not found." });
+        }
+
+        return Ok(metadata);
+    }
+
     [HttpGet("chat/threads")]
     public async Task<IActionResult> ListThreads([FromQuery] int pageSize = 50, CancellationToken ct = default)
     {
@@ -167,14 +207,15 @@ public sealed class CommunicationsController(
     [HttpPost("chat/threads")]
     public async Task<IActionResult> CreateThread([FromBody] CreateThreadRequest request, CancellationToken ct)
     {
-        if (!HasTenantAccess(request.TenantId))
+        var tenantId = request.TenantId ?? GetCallerTenant();
+        if (string.IsNullOrWhiteSpace(tenantId))
         {
-            return Forbid();
+            return BadRequest(new { error = "tenantId is required." });
         }
 
-        if (string.IsNullOrWhiteSpace(request.CreatorToken))
+        if (!HasTenantAccess(tenantId))
         {
-            return BadRequest(new { error = "creatorToken is required." });
+            return Forbid();
         }
 
         if (string.IsNullOrWhiteSpace(request.Topic))
@@ -182,17 +223,101 @@ public sealed class CommunicationsController(
             return BadRequest(new { error = "topic is required." });
         }
 
-        if (string.IsNullOrWhiteSpace(request.TenantId))
+        var creatorEntraUserId = GetCallerOid();
+        if (string.IsNullOrWhiteSpace(creatorEntraUserId))
         {
-            return BadRequest(new { error = "tenantId is required." });
+            return Forbid();
         }
 
         try
         {
+            var requestedParticipants = request.Participants
+                .Where(participant => !string.IsNullOrWhiteSpace(participant.EntraUserId))
+                .GroupBy(participant => participant.EntraUserId!, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+
+            if (!requestedParticipants.Any(participant =>
+                string.Equals(participant.EntraUserId, creatorEntraUserId, StringComparison.OrdinalIgnoreCase)))
+            {
+                requestedParticipants.Insert(0, new ThreadParticipantInput
+                {
+                    EntraUserId = creatorEntraUserId,
+                    DisplayName = User.FindFirstValue("name"),
+                    Role = "Creator"
+                });
+            }
+
+            var resolvedParticipants = new List<ThreadParticipantInput>(requestedParticipants.Count);
+            foreach (var participant in requestedParticipants)
+            {
+                if (string.IsNullOrWhiteSpace(participant.EntraUserId))
+                {
+                    continue;
+                }
+
+                var communicationUserId = participant.CommunicationUserId;
+                if (string.IsNullOrWhiteSpace(communicationUserId))
+                {
+                    communicationUserId = await ResolveOrCreateAcsUserIdForEntraAsync(
+                        tenantId,
+                        participant.EntraUserId,
+                        ct);
+                }
+
+                if (string.IsNullOrWhiteSpace(communicationUserId))
+                {
+                    return BadRequest(new { error = $"Could not resolve ACS identity for participant {participant.EntraUserId}." });
+                }
+
+                resolvedParticipants.Add(new ThreadParticipantInput
+                {
+                    CommunicationUserId = communicationUserId,
+                    EntraUserId = participant.EntraUserId,
+                    DisplayName = participant.DisplayName,
+                    Role = participant.Role
+                });
+            }
+
+            var creatorParticipant = resolvedParticipants.FirstOrDefault(participant =>
+                string.Equals(participant.EntraUserId, creatorEntraUserId, StringComparison.OrdinalIgnoreCase));
+
+            var creatorAcsUserId = creatorParticipant?.CommunicationUserId;
+            if (string.IsNullOrWhiteSpace(creatorAcsUserId))
+            {
+                creatorAcsUserId = await ResolveOrCreateAcsUserIdForEntraAsync(tenantId, creatorEntraUserId, ct);
+            }
+
+            if (string.IsNullOrWhiteSpace(creatorAcsUserId))
+            {
+                return Forbid();
+            }
+
+            var creatorToken = request.CreatorToken;
+            if (string.IsNullOrWhiteSpace(creatorToken))
+            {
+                creatorToken = await ResolveTokenForEntraUserAsync(tenantId, creatorEntraUserId, creatorAcsUserId, ct);
+            }
+
+            if (string.IsNullOrWhiteSpace(creatorToken))
+            {
+                return Forbid();
+            }
+
+            request.TenantId = tenantId;
+            request.CreatorToken = creatorToken;
+            request.Participants = resolvedParticipants;
+
             var created = await chatService.CreateThreadAsync(request, ct);
-            await indexRepository.UpsertThreadParticipantsAsync(request.TenantId, created.ThreadId, request.Participants, ct);
+            await indexRepository.UpsertThreadMetadataAsync(
+                tenantId,
+                created.ThreadId,
+                request.Topic,
+                creatorEntraUserId,
+                ct);
+            await indexRepository.UpsertThreadParticipantsAsync(tenantId, created.ThreadId, resolvedParticipants, ct);
             await indexRepository.UpsertUserThreadIndexEntriesAsync(
-                request.TenantId,
+                tenantId,
                 created.ThreadId,
                 request.Topic,
                 lastMessagePreview: "Thread created",
@@ -200,6 +325,27 @@ public sealed class CommunicationsController(
                 senderEntraUserId: null,
                 complianceState: "unknown",
                 ct);
+
+            var createdEvent = new ThreadCreatedRealtimeEvent
+            {
+                ThreadId = created.ThreadId,
+                Topic = request.Topic,
+                CreatedByEntraUserId = creatorEntraUserId,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+            };
+
+            var participantUserGroups = resolvedParticipants
+                .Select(participant => participant.EntraUserId)
+                .Where(entraUserId => !string.IsNullOrWhiteSpace(entraUserId))
+                .Select(entraUserId => ThreadsHub.GroupForUser(entraUserId!))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (participantUserGroups.Length > 0)
+            {
+                await threadsHub.Clients.Groups(participantUserGroups)
+                    .SendAsync("threadCreated", createdEvent, ct);
+            }
 
             return Ok(created);
         }
@@ -212,12 +358,24 @@ public sealed class CommunicationsController(
     [HttpPost("chat/messages")]
     public async Task<IActionResult> SendChatMessage([FromBody] SendChatMessageRequest request, CancellationToken ct)
     {
-        if (!HasTenantAccess(request.TenantId))
+        var tenantId = request.TenantId ?? GetCallerTenant();
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return BadRequest(new { error = "tenantId is required." });
+        }
+
+        if (!HasTenantAccess(tenantId))
         {
             return Forbid();
         }
 
-        if (!HasUserAccess(request.SenderEntraUserId))
+        var senderEntraUserId = request.SenderEntraUserId ?? GetCallerOid();
+        if (string.IsNullOrWhiteSpace(senderEntraUserId))
+        {
+            return BadRequest(new { error = "senderEntraUserId is required." });
+        }
+
+        if (!HasUserAccess(senderEntraUserId))
         {
             return Forbid();
         }
@@ -227,11 +385,6 @@ public sealed class CommunicationsController(
             return BadRequest(new { error = "threadId is required." });
         }
 
-        if (string.IsNullOrWhiteSpace(request.SenderToken))
-        {
-            return BadRequest(new { error = "senderToken is required." });
-        }
-
         if (string.IsNullOrWhiteSpace(request.Content))
         {
             return BadRequest(new { error = "content is required." });
@@ -239,20 +392,46 @@ public sealed class CommunicationsController(
 
         try
         {
+            var senderToken = request.SenderToken;
+            if (string.IsNullOrWhiteSpace(senderToken))
+            {
+                senderToken = await ResolveTokenForThreadActorAsync(tenantId, request.ThreadId, senderEntraUserId, ct);
+                if (string.IsNullOrWhiteSpace(senderToken))
+                {
+                    return Forbid();
+                }
+            }
+
+            request.SenderToken = senderToken;
+            request.TenantId = tenantId;
+            request.SenderEntraUserId = senderEntraUserId;
+
             var sent = await chatService.SendChatMessageAsync(request, ct);
 
-            if (!string.IsNullOrWhiteSpace(request.TenantId))
-            {
-                await indexRepository.UpsertUserThreadIndexEntriesAsync(
-                    request.TenantId,
-                    request.ThreadId,
-                    topic: string.Empty,
-                    lastMessagePreview: BuildMessagePreview(request.Content),
-                    lastMessageAtUtc: sent.SentAt,
-                    senderEntraUserId: request.SenderEntraUserId,
-                    complianceState: request.ComplianceState,
+            await indexRepository.UpsertUserThreadIndexEntriesAsync(
+                tenantId,
+                request.ThreadId,
+                topic: string.Empty,
+                lastMessagePreview: BuildMessagePreview(request.Content),
+                lastMessageAtUtc: sent.SentAt,
+                senderEntraUserId: senderEntraUserId,
+                complianceState: request.ComplianceState,
+                ct);
+
+            await threadsHub.Clients
+                .Group(ThreadsHub.GroupForThread(request.ThreadId))
+                .SendAsync(
+                    "messageReceived",
+                    new ThreadMessageRealtimeEvent
+                    {
+                        ThreadId = request.ThreadId,
+                        MessageId = sent.MessageId,
+                        Content = request.Content,
+                        SenderDisplayName = request.SenderDisplayName,
+                        SenderEntraUserId = senderEntraUserId,
+                        SentAtUtc = sent.SentAt
+                    },
                     ct);
-            }
 
             return Ok(sent);
         }
@@ -260,6 +439,172 @@ public sealed class CommunicationsController(
         {
             return ToErrorResult(ex);
         }
+    }
+
+    [HttpPost("chat/threads/{threadId}/leave")]
+    public async Task<IActionResult> LeaveThread([FromRoute] string threadId, [FromQuery] string? tenantId = null, CancellationToken ct = default)
+    {
+        var resolvedTenantId = tenantId ?? GetCallerTenant();
+        if (string.IsNullOrWhiteSpace(resolvedTenantId))
+        {
+            return BadRequest(new { error = "tenantId is required." });
+        }
+
+        if (!HasTenantAccess(resolvedTenantId))
+        {
+            return Forbid();
+        }
+
+        var callerOid = GetCallerOid();
+        if (string.IsNullOrWhiteSpace(callerOid))
+        {
+            return Forbid();
+        }
+
+        var participant = await indexRepository.GetThreadParticipantAsync(resolvedTenantId, threadId, callerOid, ct);
+        if (participant is null)
+        {
+            return NotFound(new { error = "Current user is not a participant in this thread." });
+        }
+
+        var metadata = await indexRepository.GetThreadMetadataAsync(resolvedTenantId, threadId, ct);
+        var isCreator = !string.IsNullOrWhiteSpace(metadata?.CreatedByEntraUserId)
+            && string.Equals(metadata.CreatedByEntraUserId, callerOid, StringComparison.OrdinalIgnoreCase);
+
+        // Backward-compatible fallback for threads created before metadata ownership existed.
+        if (!isCreator && metadata is null)
+        {
+            isCreator = string.Equals(participant.Role, "Creator", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (isCreator)
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new { error = "Thread creator cannot leave the thread. Delete the thread instead." });
+        }
+
+        await indexRepository.DeleteThreadParticipantAsync(resolvedTenantId, threadId, callerOid, ct);
+        await indexRepository.DeleteUserThreadIndexEntryAsync(resolvedTenantId, callerOid, threadId, ct);
+
+        var remainingParticipants = await indexRepository.GetThreadParticipantsAsync(resolvedTenantId, threadId, ct);
+        if (remainingParticipants.Count == 0)
+        {
+            var token = await ResolveTokenForEntraUserAsync(
+                resolvedTenantId,
+                callerOid,
+                participant.AcsUserId,
+                ct);
+
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                try
+                {
+                    await chatService.DeleteChatThreadAsync(token, threadId, ct);
+                }
+                catch
+                {
+                    // Keep table/index cleanup as source of truth for current user.
+                }
+            }
+
+            await indexRepository.DeleteThreadMetadataAsync(resolvedTenantId, threadId, ct);
+        }
+
+        await threadsHub.Clients
+            .Group(ThreadsHub.GroupForThread(threadId))
+            .SendAsync("threadLeft", new { threadId, entraUserId = callerOid }, ct);
+
+        return NoContent();
+    }
+
+    [HttpDelete("chat/threads/{threadId}")]
+    public async Task<IActionResult> DeleteThread([FromRoute] string threadId, [FromQuery] string? tenantId = null, CancellationToken ct = default)
+    {
+        var resolvedTenantId = tenantId ?? GetCallerTenant();
+        if (string.IsNullOrWhiteSpace(resolvedTenantId))
+        {
+            return BadRequest(new { error = "tenantId is required." });
+        }
+
+        if (!HasTenantAccess(resolvedTenantId))
+        {
+            return Forbid();
+        }
+
+        var callerOid = GetCallerOid();
+        if (string.IsNullOrWhiteSpace(callerOid))
+        {
+            return Forbid();
+        }
+
+        var participants = await indexRepository.GetThreadParticipantsAsync(resolvedTenantId, threadId, ct);
+        var callerParticipant = participants.FirstOrDefault(participant =>
+            string.Equals(participant.EntraUserId, callerOid, StringComparison.OrdinalIgnoreCase));
+        if (callerParticipant is null)
+        {
+            return Forbid();
+        }
+
+        var metadata = await indexRepository.GetThreadMetadataAsync(resolvedTenantId, threadId, ct);
+        var isCreator = !string.IsNullOrWhiteSpace(metadata?.CreatedByEntraUserId)
+            && string.Equals(metadata.CreatedByEntraUserId, callerOid, StringComparison.OrdinalIgnoreCase);
+
+        // Backward-compatible fallback for threads created before metadata ownership existed.
+        if (!isCreator && metadata is null)
+        {
+            isCreator = string.Equals(callerParticipant.Role, "Creator", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!isCreator)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the thread creator can delete this thread. Participants can leave the thread." });
+        }
+
+        var token = await ResolveTokenForThreadActorAsync(resolvedTenantId, threadId, callerOid, ct);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            var fallback = participants.FirstOrDefault(participant =>
+                !string.IsNullOrWhiteSpace(participant.AcsUserId));
+            if (fallback is null)
+            {
+                return NotFound(new { error = "Thread participants were not found." });
+            }
+
+            token = await ResolveTokenForEntraUserAsync(
+                resolvedTenantId,
+                fallback.EntraUserId,
+                fallback.AcsUserId,
+                ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return Forbid();
+        }
+
+        await chatService.DeleteChatThreadAsync(token, threadId, ct);
+
+        foreach (var participant in participants)
+        {
+            await indexRepository.DeleteUserThreadIndexEntryAsync(
+                resolvedTenantId,
+                participant.EntraUserId,
+                threadId,
+                ct);
+            await indexRepository.DeleteThreadParticipantAsync(
+                resolvedTenantId,
+                threadId,
+                participant.EntraUserId,
+                ct);
+        }
+        await indexRepository.DeleteThreadMetadataAsync(resolvedTenantId, threadId, ct);
+
+        await threadsHub.Clients
+            .Group(ThreadsHub.GroupForThread(threadId))
+            .SendAsync("threadDeleted", new { threadId, deletedBy = callerOid }, ct);
+
+        return NoContent();
     }
 
     [HttpGet("chat/threads/{threadId}/messages")]
@@ -273,7 +618,18 @@ public sealed class CommunicationsController(
         var token = ResolveAcsUserToken();
         if (string.IsNullOrWhiteSpace(token))
         {
-            return BadRequest(new { error = "ACS user token is required in X-Acs-User-Token header." });
+            var tenantId = GetCallerTenant();
+            var callerOid = GetCallerOid();
+            if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(callerOid))
+            {
+                return Forbid();
+            }
+
+            token = await ResolveTokenForThreadActorAsync(tenantId, threadId, callerOid, ct);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return Forbid();
+            }
         }
 
         try
@@ -338,6 +694,81 @@ public sealed class CommunicationsController(
         return raw.Trim();
     }
 
+    private string? GetCallerTenant()
+    {
+        return User.FindFirstValue("tid")
+            ?? User.FindFirstValue("http://schemas.microsoft.com/identity/claims/tenantid");
+    }
+
+    private string? GetCallerOid()
+    {
+        return User.FindFirstValue("oid")
+            ?? User.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier")
+            ?? User.FindFirstValue("sub");
+    }
+
+    private async Task<string?> ResolveTokenForThreadActorAsync(string tenantId, string threadId, string entraUserId, CancellationToken ct)
+    {
+        string? acsUserId = null;
+
+        var participant = await indexRepository.GetThreadParticipantAsync(tenantId, threadId, entraUserId, ct);
+        if (!string.IsNullOrWhiteSpace(participant?.AcsUserId))
+        {
+            acsUserId = participant.AcsUserId;
+            await indexRepository.UpsertUserIdentityMapAsync(tenantId, entraUserId, acsUserId, ct);
+        }
+        else
+        {
+            var mapped = await indexRepository.GetUserIdentityMapAsync(tenantId, entraUserId, ct);
+            acsUserId = mapped?.AcsUserId;
+        }
+
+        if (string.IsNullOrWhiteSpace(acsUserId))
+        {
+            return null;
+        }
+
+        return await ResolveTokenForEntraUserAsync(tenantId, entraUserId, acsUserId, ct);
+    }
+
+    private async Task<string?> ResolveOrCreateAcsUserIdForEntraAsync(string tenantId, string entraUserId, CancellationToken ct)
+    {
+        var mapped = await indexRepository.GetUserIdentityMapAsync(tenantId, entraUserId, ct);
+        if (!string.IsNullOrWhiteSpace(mapped?.AcsUserId))
+        {
+            return mapped.AcsUserId;
+        }
+
+        var created = await chatService.IssueTokenAsync(new IssueTokenRequest
+        {
+            UserId = null,
+            IncludeVoip = false,
+            TenantId = tenantId,
+            EntraUserId = entraUserId
+        }, ct);
+
+        if (string.IsNullOrWhiteSpace(created.UserId))
+        {
+            return null;
+        }
+
+        await indexRepository.UpsertUserIdentityMapAsync(tenantId, entraUserId, created.UserId, ct);
+        return created.UserId;
+    }
+
+    private async Task<string?> ResolveTokenForEntraUserAsync(string tenantId, string entraUserId, string acsUserId, CancellationToken ct)
+    {
+        var issued = await chatService.IssueTokenAsync(new IssueTokenRequest
+        {
+            UserId = acsUserId,
+            IncludeVoip = false,
+            TenantId = tenantId,
+            EntraUserId = entraUserId
+        }, ct);
+
+        return issued.Token;
+    }
+
     private IActionResult ToErrorResult(Exception ex)
     {
         return ex switch
@@ -361,8 +792,7 @@ public sealed class CommunicationsController(
             return true;
         }
 
-        var callerTenant = User.FindFirstValue("tid");
-        callerTenant ??= User.FindFirstValue("http://schemas.microsoft.com/identity/claims/tenantid");
+        var callerTenant = GetCallerTenant();
         return !string.IsNullOrWhiteSpace(callerTenant)
             && string.Equals(callerTenant, tenantId, StringComparison.OrdinalIgnoreCase);
     }
@@ -379,9 +809,7 @@ public sealed class CommunicationsController(
             return true;
         }
 
-        var callerOid = User.FindFirstValue("oid")
-            ?? User.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier")
-            ?? User.FindFirstValue("sub");
+        var callerOid = GetCallerOid();
         return !string.IsNullOrWhiteSpace(callerOid)
             && string.Equals(callerOid, entraUserId, StringComparison.OrdinalIgnoreCase);
     }

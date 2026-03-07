@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useMsal } from "@azure/msal-react";
 import { getApiAccessToken } from "@/auth/tokenManager";
 import { buildCurrentUser } from "@/auth/currentUser";
-import { getAcsTokenForCurrentUser } from "@/auth/acsTokenManager";
 import { useAppStore } from "@/stores/appStore";
 
 export default function AuthCallback() {
@@ -33,12 +32,6 @@ export default function AuthCallback() {
       const apiToken = await getApiAccessToken();
       const user = buildCurrentUser(account, apiToken);
       setCurrentUser(user);
-
-      if (user?.oid && user.tenantId) {
-        await getAcsTokenForCurrentUser(user).catch(() => {
-          // ACS token provisioning is best-effort during login; chat screen handles missing token.
-        });
-      }
 
       if (!cancelled) {
         navigate("/dashboard", { replace: true });

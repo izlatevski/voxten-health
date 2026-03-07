@@ -2,6 +2,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Voxten.CommunicationsApi.Hubs;
 using Voxten.CommunicationsApi.Repositories;
 using Voxten.CommunicationsApi.Services;
 
@@ -12,6 +13,7 @@ AddAuthentication(builder);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSignalR();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("PortalCors", policy =>
@@ -28,7 +30,8 @@ builder.Services.AddCors(options =>
         policy
             .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 builder.Services.AddSingleton<AcsChatService>();
@@ -47,6 +50,7 @@ app.UseCors("PortalCors");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<ThreadsHub>("/hubs/threads");
 
 app.MapGet("/healthz", () => Results.Ok(new
 {
@@ -101,6 +105,21 @@ static void AddAuthentication(WebApplicationBuilder builder)
                 ValidAudiences = validAudiences,
                 NameClaimType = "name",
                 RoleClaimType = "roles"
+            };
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrWhiteSpace(accessToken)
+                        && path.StartsWithSegments("/hubs/threads", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Token = accessToken;
+                    }
+
+                    return Task.CompletedTask;
+                }
             };
         });
 

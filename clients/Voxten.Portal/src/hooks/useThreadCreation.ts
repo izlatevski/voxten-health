@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-  createChatThread,
-  ensureAcsUserIdForEntra,
-} from "@/lib/chatApi";
-import { getAcsTokenForCurrentUser } from "@/auth/acsTokenManager";
+import { createChatThread } from "@/lib/chatApi";
 import { searchEntraUsers, type EntraUserSearchItem } from "@/lib/portalApi";
 import type { CurrentUser } from "@/stores/appStore";
 
@@ -76,13 +72,6 @@ export function useThreadCreation({ currentUser, onThreadCreated }: UseThreadCre
       return;
     }
 
-    const acs = await getAcsTokenForCurrentUser(currentUser);
-    const creatorToken = acs?.token ?? null;
-    if (!creatorToken) {
-      toast.error("Missing ACS token", { description: "Sign in again to provision your chat token." });
-      return;
-    }
-
     const topic = newThreadTopic.trim();
     if (!topic) {
       toast.error("Thread topic is required");
@@ -91,27 +80,13 @@ export function useThreadCreation({ currentUser, onThreadCreated }: UseThreadCre
 
     setCreatingThread(true);
     try {
-      let currentAcsUserId = acs?.userId || "";
-      if (!currentAcsUserId) {
-        currentAcsUserId = await ensureAcsUserIdForEntra(currentUser.tenantId, currentUser.oid);
-      }
-
-      const selectedWithAcsIds = await Promise.all(
-        selectedUsers.map(async (user) => ({
-          user,
-          acsUserId: await ensureAcsUserIdForEntra(currentUser.tenantId!, user.id),
-        })),
-      );
-
       const participants = [
         {
-          communicationUserId: currentAcsUserId,
           entraUserId: currentUser.oid,
           displayName: currentUser.displayName,
           role: currentUser.roles[0] || currentUser.jobTitle || "User",
         },
-        ...selectedWithAcsIds.map(({ user, acsUserId }) => ({
-          communicationUserId: acsUserId,
+        ...selectedUsers.map((user) => ({
           entraUserId: user.id,
           displayName: user.displayName,
           role: user.jobTitle || "Participant",
@@ -119,7 +94,6 @@ export function useThreadCreation({ currentUser, onThreadCreated }: UseThreadCre
       ];
 
       const created = await createChatThread({
-        creatorToken,
         topic,
         tenantId: currentUser.tenantId,
         participants,

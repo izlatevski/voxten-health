@@ -9,7 +9,6 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { getApiAccessToken } from "@/auth/tokenManager";
 import { hasAnyRole } from "@/auth/roles";
 import { buildCurrentUser } from "@/auth/currentUser";
-import { getAcsTokenForCurrentUser } from "@/auth/acsTokenManager";
 import { useAppStore } from "@/stores/appStore";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -40,8 +39,6 @@ function AuthStateSync() {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
 
   useEffect(() => {
-    let cancelled = false;
-
     async function run() {
       const account = accounts[0] ?? instance.getActiveAccount() ?? null;
       if (account) {
@@ -51,21 +48,9 @@ function AuthStateSync() {
       const apiToken = await getApiAccessToken();
       const user = buildCurrentUser(account, apiToken);
       setCurrentUser(user);
-
-      if (!user?.oid || !user.tenantId || cancelled) return;
-
-      try {
-        await getAcsTokenForCurrentUser(user);
-      } catch {
-        // Best-effort sync; chat screen can reattempt after sign-in.
-      }
     }
 
     void run();
-
-    return () => {
-      cancelled = true;
-    };
   }, [accounts, instance, setCurrentUser]);
 
   return null;

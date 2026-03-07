@@ -10,12 +10,14 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
     private readonly TableClient _userIdentityMapTable = BuildTableClient(configuration, "Storage:UserIdentityTableName", "UserIdentityMap");
     private readonly TableClient _userThreadIndexTable = BuildTableClient(configuration, "Storage:UserThreadIndexTableName", "UserThreadIndex");
     private readonly TableClient _threadParticipantsTable = BuildTableClient(configuration, "Storage:ThreadParticipantsTableName", "ThreadParticipants");
+    private readonly TableClient _threadMetadataTable = BuildTableClient(configuration, "Storage:ThreadMetadataTableName", "ThreadMetadata");
 
     public async Task EnsureTablesAsync(CancellationToken ct)
     {
         await _userIdentityMapTable.CreateIfNotExistsAsync(ct);
         await _userThreadIndexTable.CreateIfNotExistsAsync(ct);
         await _threadParticipantsTable.CreateIfNotExistsAsync(ct);
+        await _threadMetadataTable.CreateIfNotExistsAsync(ct);
     }
 
     public async Task UpsertUserIdentityMapAsync(string tenantId, string entraUserId, string acsUserId, CancellationToken ct)
@@ -77,7 +79,7 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
                 PartitionKey = partitionKey,
                 RowKey = participant.EntraUserId!,
                 EntraUserId = participant.EntraUserId!,
-                AcsUserId = participant.CommunicationUserId,
+                AcsUserId = participant.CommunicationUserId ?? string.Empty,
                 DisplayName = participant.DisplayName ?? string.Empty,
                 Role = participant.Role ?? string.Empty,
                 JoinedUtc = now
@@ -106,6 +108,33 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
         }
 
         return items;
+    }
+
+    public async Task<ThreadParticipantModel?> GetThreadParticipantAsync(string tenantId, string threadId, string entraUserId, CancellationToken ct)
+    {
+        var partitionKey = BuildThreadParticipantsPartitionKey(tenantId, threadId);
+
+        try
+        {
+            var response = await _threadParticipantsTable.GetEntityAsync<ThreadParticipantEntity>(
+                partitionKey,
+                entraUserId,
+                cancellationToken: ct);
+
+            var entity = response.Value;
+            return new ThreadParticipantModel
+            {
+                EntraUserId = entity.EntraUserId,
+                AcsUserId = entity.AcsUserId,
+                DisplayName = entity.DisplayName,
+                Role = entity.Role,
+                JoinedUtc = entity.JoinedUtc
+            };
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
     }
 
     public async Task UpsertUserThreadIndexEntriesAsync(string tenantId, string threadId, string topic, string lastMessagePreview, DateTimeOffset lastMessageAtUtc, string? senderEntraUserId, string complianceState, CancellationToken ct)
@@ -147,6 +176,101 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
             }
 
             await _userThreadIndexTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        }
+    }
+
+    public async Task DeleteThreadParticipantAsync(string tenantId, string threadId, string entraUserId, CancellationToken ct)
+    {
+        var partitionKey = BuildThreadParticipantsPartitionKey(tenantId, threadId);
+        try
+        {
+            await _threadParticipantsTable.DeleteEntityAsync(partitionKey, entraUserId, ETag.All, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // No-op for idempotency.
+        }
+    }
+
+    public async Task DeleteUserThreadIndexEntryAsync(string tenantId, string entraUserId, string threadId, CancellationToken ct)
+    {
+        var partitionKey = BuildUserThreadsPartitionKey(tenantId, entraUserId);
+        try
+        {
+            await _userThreadIndexTable.DeleteEntityAsync(partitionKey, threadId, ETag.All, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // No-op for idempotency.
+        }
+    }
+
+    public async Task UpsertThreadMetadataAsync(string tenantId, string threadId, string topic, string createdByEntraUserId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        ThreadMetadataEntity entity;
+        try
+        {
+            var existing = await _threadMetadataTable.GetEntityAsync<ThreadMetadataEntity>(tenantId, threadId, cancellationToken: ct);
+            entity = existing.Value;
+            if (!string.IsNullOrWhiteSpace(topic))
+            {
+                entity.Topic = topic;
+            }
+            if (!string.IsNullOrWhiteSpace(createdByEntraUserId))
+            {
+                entity.CreatedByEntraUserId = createdByEntraUserId;
+            }
+            entity.UpdatedUtc = now;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            entity = new ThreadMetadataEntity
+            {
+                PartitionKey = tenantId,
+                RowKey = threadId,
+                ThreadId = threadId,
+                Topic = topic,
+                CreatedByEntraUserId = createdByEntraUserId,
+                CreatedUtc = now,
+                UpdatedUtc = now
+            };
+        }
+
+        await _threadMetadataTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+    }
+
+    public async Task<ThreadMetadataModel?> GetThreadMetadataAsync(string tenantId, string threadId, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _threadMetadataTable.GetEntityAsync<ThreadMetadataEntity>(tenantId, threadId, cancellationToken: ct);
+            var entity = response.Value;
+            return new ThreadMetadataModel
+            {
+                TenantId = entity.PartitionKey,
+                ThreadId = entity.ThreadId,
+                Topic = entity.Topic,
+                CreatedByEntraUserId = entity.CreatedByEntraUserId,
+                CreatedUtc = entity.CreatedUtc,
+                UpdatedUtc = entity.UpdatedUtc
+            };
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    public async Task DeleteThreadMetadataAsync(string tenantId, string threadId, CancellationToken ct)
+    {
+        try
+        {
+            await _threadMetadataTable.DeleteEntityAsync(tenantId, threadId, ETag.All, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // No-op for idempotency.
         }
     }
 

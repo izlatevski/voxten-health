@@ -41,3 +41,16 @@ public sealed class ThreadParticipantEntity : ITableEntity
     public DateTimeOffset? Timestamp { get; set; }
     public ETag ETag { get; set; }
 }
+
+public sealed class ThreadMetadataEntity : ITableEntity
+{
+    public string PartitionKey { get; set; } = string.Empty; // tenantId
+    public string RowKey { get; set; } = string.Empty; // threadId
+    public string ThreadId { get; set; } = string.Empty;
+    public string Topic { get; set; } = string.Empty;
+    public string CreatedByEntraUserId { get; set; } = string.Empty;
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+    public DateTimeOffset? Timestamp { get; set; }
+    public ETag ETag { get; set; }
+}

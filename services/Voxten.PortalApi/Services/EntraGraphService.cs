@@ -11,9 +11,9 @@ public sealed class EntraGraphService(IConfiguration configuration, IHttpClientF
 
     public async Task<IReadOnlyList<EntraUserSummary>> SearchUsersAsync(string query, int top, CancellationToken ct)
     {
-        var tenantId = Required("Identity:TenantId");
-        var clientId = Required("Identity:ClientId");
-        var clientSecret = Required("Identity:Secret");
+        var tenantId = Required("Authentication:TenantId");
+        var clientId = Required("Authentication:ClientId");
+        var clientSecret = Required("Authentication:Secret");
         var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
 
         var token = await credential.GetTokenAsync(

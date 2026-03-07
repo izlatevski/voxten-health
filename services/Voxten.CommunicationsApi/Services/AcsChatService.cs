@@ -61,6 +61,16 @@ public sealed class AcsChatService(IConfiguration configuration)
 
     public async Task<CreateThreadResponse> CreateThreadAsync(CreateThreadRequest request, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.CreatorToken))
+        {
+            throw new ArgumentException("Creator token is required.", nameof(request.CreatorToken));
+        }
+
+        if (request.Participants.Any(participant => string.IsNullOrWhiteSpace(participant.CommunicationUserId)))
+        {
+            throw new ArgumentException("All participants must have communicationUserId.");
+        }
+
         var chatClient = BuildUserChatClient(_configuration, request.CreatorToken);
         var participants = request.Participants.Select(p => new ChatParticipant(new CommunicationUserIdentifier(p.CommunicationUserId))
         {
@@ -77,6 +87,11 @@ public sealed class AcsChatService(IConfiguration configuration)
 
     public async Task<SendChatMessageResponse> SendChatMessageAsync(SendChatMessageRequest request, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.SenderToken))
+        {
+            throw new ArgumentException("Sender token is required.", nameof(request.SenderToken));
+        }
+
         var chatClient = BuildUserChatClient(_configuration, request.SenderToken);
         var threadClient = chatClient.GetChatThreadClient(request.ThreadId);
 
@@ -103,10 +118,16 @@ public sealed class AcsChatService(IConfiguration configuration)
 
         await foreach (var message in threadClient.GetMessagesAsync(cancellationToken: ct))
         {
+            var content = message.Content?.Message ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                continue;
+            }
+
             items.Add(new ChatThreadMessageItem
             {
                 Id = message.Id ?? string.Empty,
-                Content = message.Content?.Message ?? string.Empty,
+                Content = content,
                 SenderDisplayName = message.SenderDisplayName,
                 SenderId = ResolveSenderId(message.Sender),
                 CreatedOnUtc = message.CreatedOn
@@ -121,6 +142,12 @@ public sealed class AcsChatService(IConfiguration configuration)
         return items
             .OrderBy(m => m.CreatedOnUtc ?? DateTimeOffset.MinValue)
             .ToList();
+    }
+
+    public async Task DeleteChatThreadAsync(string userToken, string threadId, CancellationToken ct)
+    {
+        var chatClient = BuildUserChatClient(_configuration, userToken);
+        await chatClient.DeleteChatThreadAsync(threadId, cancellationToken: ct);
     }
 
     public async Task<SendSmsResponse> SendSmsAsync(SendSmsRequest request, CancellationToken ct)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getThreadParticipants, getThreadsForUser, type ThreadParticipant } from "@/lib/chatApi";
+import { subscribeToThreadLifecycle, subscribeToUserThreadEvents } from "@/lib/realtime/threadHub";
 import type { CurrentUser } from "@/stores/appStore";
 
 export interface ThreadListItem {
@@ -53,29 +54,69 @@ function threadFromIndex(item: {
   };
 }
 
-function participantToLabel(participant: ThreadParticipant): { name: string; role: string } {
-  return {
-    name: participant.displayName || participant.entraUserId,
-    role: participant.role || "Participant",
-  };
-}
-
 export function useThreadList(currentUser: CurrentUser | null) {
   const selectedThreadIdRef = useRef<string>("");
   const [threads, setThreads] = useState<ThreadListItem[]>([]);
   const [selectedThread, setSelectedThread] = useState("");
   const [loadingThreads, setLoadingThreads] = useState(false);
-  const [threadParticipants, setThreadParticipants] = useState<Record<string, { name: string; role: string }[]>>({});
+  const [threadParticipants, setThreadParticipants] = useState<Record<string, ThreadParticipant[]>>({});
 
   const thread = useMemo(
     () => threads.find((t) => t.id === selectedThread) ?? threads[0] ?? null,
     [threads, selectedThread],
   );
+  const threadIds = useMemo(() => threads.map((item) => item.id), [threads]);
+  const threadIdsKey = useMemo(() => threadIds.join("|"), [threadIds]);
   const selectedThreadId = thread?.id ?? "";
 
   useEffect(() => {
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  const removeThreadLocally = useCallback((threadId: string) => {
+    if (!threadId) return;
+
+    setThreads((prev) => {
+      const next = prev.filter((item) => item.id !== threadId);
+      setSelectedThread((current) => {
+        if (current !== threadId) return current;
+        return next[0]?.id ?? "";
+      });
+      return next;
+    });
+    setThreadParticipants((prev) => {
+      if (!(threadId in prev)) return prev;
+      const next = { ...prev };
+      delete next[threadId];
+      return next;
+    });
+  }, []);
+
+  const removeParticipantFromThreadLocally = useCallback((threadId: string, entraUserId: string): string | null => {
+    if (!threadId || !entraUserId) return null;
+
+    let removedName: string | null = null;
+    setThreadParticipants((prev) => {
+      const existing = prev[threadId] || [];
+      if (existing.length === 0) return prev;
+
+      const next = existing.filter((participant) => {
+        const isMatch = participant.entraUserId.toLowerCase() === entraUserId.toLowerCase();
+        if (isMatch) {
+          removedName = participant.displayName || participant.entraUserId;
+        }
+        return !isMatch;
+      });
+
+      if (next.length === existing.length) return prev;
+      return {
+        ...prev,
+        [threadId]: next,
+      };
+    });
+
+    return removedName;
+  }, []);
 
   const reloadThreadsForCurrentUser = useCallback(async () => {
     if (!currentUser?.oid || !currentUser.tenantId) {
@@ -127,7 +168,7 @@ export function useThreadList(currentUser: CurrentUser | null) {
         if (cancelled) return;
         setThreadParticipants((prev) => ({
           ...prev,
-          [selectedThreadId]: participants.map(participantToLabel),
+          [selectedThreadId]: participants,
         }));
       } catch {
         // Keep UI stable when participant metadata is not yet available.
@@ -155,12 +196,75 @@ export function useThreadList(currentUser: CurrentUser | null) {
     );
   }, []);
 
+  useEffect(() => {
+    if (!currentUser?.oid || threadIds.length === 0) {
+      return;
+    }
+
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    async function subscribe() {
+      try {
+        unsubscribe = await subscribeToThreadLifecycle(threadIds, {
+          onThreadDeleted: (event) => {
+            if (disposed) return;
+            removeThreadLocally(event.threadId);
+          },
+          onThreadLeft: (event) => {
+            if (disposed) return;
+            if (event.entraUserId !== currentUser.oid) {
+              return;
+            }
+            removeThreadLocally(event.threadId);
+          },
+        });
+      } catch {
+        // Keep UI functional without realtime lifecycle notifications.
+      }
+    }
+
+    void subscribe();
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [currentUser?.oid, removeThreadLocally, threadIds, threadIdsKey]);
+
+  useEffect(() => {
+    if (!currentUser?.oid) {
+      return;
+    }
+
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+
+    async function subscribe() {
+      try {
+        unsubscribe = await subscribeToUserThreadEvents({
+          onThreadCreated: () => {
+            if (disposed) return;
+            void reloadThreadsForCurrentUser();
+          },
+        });
+      } catch {
+        // Keep UI functional without user-level realtime notifications.
+      }
+    }
+
+    void subscribe();
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [currentUser?.oid, reloadThreadsForCurrentUser]);
+
   return {
     threads,
     selectedThread,
     setSelectedThread,
     loadingThreads,
     threadParticipants,
+    removeParticipantFromThreadLocally,
     thread,
     selectedThreadId,
     onIncomingThreadActivity,

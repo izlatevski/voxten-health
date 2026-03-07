@@ -1,16 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  getChatThreadMessagesFromAcs,
-  getThreadParticipants,
-  SESSION_ACS_USER_TOKEN_KEY,
-  SESSION_ACS_USER_ID_KEY,
-  subscribeToAcsIncomingMessages,
-  upsertUserIdentityMap,
-  type AcsIncomingMessage,
+  getChatThreadMessages,
 } from "@/lib/chatApi";
-import { getAcsTokenForCurrentUser } from "@/auth/acsTokenManager";
-import type { CurrentUser } from "@/stores/appStore";
+import { subscribeToThreadMessages, type ThreadMessageRealtimeEvent } from "@/lib/realtime/threadHub";
 
 export interface ThreadUiMessage {
   id: string;
@@ -33,27 +26,17 @@ export interface ThreadUiMessage {
 }
 
 interface UseThreadMessagesOptions {
-  currentUser: CurrentUser | null;
   selectedThreadId: string;
   onIncomingThreadActivity?: (activity: { threadId: string; content: string }) => void;
 }
 
 export function useThreadMessages({
-  currentUser,
   selectedThreadId,
   onIncomingThreadActivity,
 }: UseThreadMessagesOptions) {
-  const [acsTokenRevision, setAcsTokenRevision] = useState(0);
-  const seenMessageIdsRef = useRef<Set<string>>(new Set());
-  const subscribedTokenRef = useRef<string>("");
-  const liveMessagesRef = useRef<Record<string, ThreadUiMessage[]>>({});
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [remoteMessages, setRemoteMessages] = useState<Record<string, ThreadUiMessage[]>>({});
   const [liveMessages, setLiveMessages] = useState<Record<string, ThreadUiMessage[]>>({});
-
-  useEffect(() => {
-    liveMessagesRef.current = liveMessages;
-  }, [liveMessages]);
 
   const messages = useMemo(() => {
     const remote = remoteMessages[selectedThreadId] || [];
@@ -72,19 +55,6 @@ export function useThreadMessages({
     return Array.from(unique.values()).sort((a, b) => (a.sortTs ?? 0) - (b.sortTs ?? 0));
   }, [liveMessages, remoteMessages, selectedThreadId]);
 
-  const ensureSessionAcsToken = useCallback(async (options?: { forceRefresh?: boolean }): Promise<string | null> => {
-    const cached = sessionStorage.getItem(SESSION_ACS_USER_TOKEN_KEY);
-    try {
-      const resolved = await getAcsTokenForCurrentUser(currentUser, { forceRefresh: options?.forceRefresh });
-      if (options?.forceRefresh && resolved?.token && resolved.token !== cached) {
-        setAcsTokenRevision((value) => value + 1);
-      }
-      return resolved?.token ?? cached ?? null;
-    } catch {
-      return cached ?? null;
-    }
-  }, [currentUser?.oid, currentUser?.tenantId]);
-
   function appendLiveMessage(threadId: string, message: ThreadUiMessage) {
     setLiveMessages((prev) => ({
       ...prev,
@@ -92,237 +62,189 @@ export function useThreadMessages({
     }));
   }
 
-  useEffect(() => {
-    let cancelled = false;
-
-    function mapAcsItemsToMessages(items: Awaited<ReturnType<typeof getChatThreadMessagesFromAcs>>): ThreadUiMessage[] {
-      const unique = new Map<string, ThreadUiMessage>();
-      for (const item of items) {
-        const id = item.id || `remote-${Math.random()}`;
-        const mapped: ThreadUiMessage = {
-          id,
-          sender: item.senderDisplayName || item.senderId || "Participant",
-          role: "Participant",
-          content: item.content || "",
-          sortTs: item.createdOnUtc ? new Date(item.createdOnUtc).getTime() : Date.now(),
-          timestamp: item.createdOnUtc
-            ? new Date(item.createdOnUtc).toLocaleTimeString("en-GB", { hour12: false })
-            : "",
-          isAI: false,
-          governance: {
-            compliance: "passed",
-            encryption: "AES-256",
-            syncStatus: "Synced from ACS",
-            auditId: item.id || "message",
-          },
-        };
-        unique.set(id, mapped);
-        if (item.id) {
-          seenMessageIdsRef.current.add(item.id);
-        }
-      }
-      return Array.from(unique.values());
-    }
-
-    function isAcsPermissionError(error: unknown): boolean {
-      if (typeof error !== "object" || error === null) return false;
-      const maybeError = error as { statusCode?: number; message?: string };
-      if (maybeError.statusCode === 403) return true;
-      const message = maybeError.message?.toLowerCase() || "";
-      return message.includes("permission") || message.includes("403");
-    }
-
-    async function loadMessages() {
-      if (!selectedThreadId) return;
-
-      const userToken = await ensureSessionAcsToken();
-      if (!userToken) {
-        if (!cancelled) {
-          toast.error("Missing ACS token", { description: "Sign in again to load thread messages." });
-        }
-        return;
-      }
-
-      setLoadingMessages(true);
-      try {
-        const items = await getChatThreadMessagesFromAcs(selectedThreadId, userToken, 100);
-        const mapped = mapAcsItemsToMessages(items);
-
-        if (cancelled) return;
-
-        setRemoteMessages((prev) => ({
-          ...prev,
-          [selectedThreadId]: mapped,
-        }));
-        setLiveMessages((prev) => {
-          const current = prev[selectedThreadId] || [];
-          if (current.length === 0) return prev;
-
-          const fetchedIds = new Set(
-            mapped.map((message) => message.governance.auditId || message.id).filter(Boolean),
-          );
-          const remaining = current.filter((message) => {
-            const key = message.governance.auditId || message.id;
-            return !key || !fetchedIds.has(key);
-          });
-
-          if (remaining.length === current.length) return prev;
-          return {
-            ...prev,
-            [selectedThreadId]: remaining,
-          };
-        });
-      } catch (error) {
-        if (isAcsPermissionError(error)) {
-          try {
-            if (currentUser?.tenantId && currentUser?.oid) {
-              const participants = await getThreadParticipants(currentUser.tenantId, selectedThreadId);
-              const me = participants.find((p) => p.entraUserId === currentUser.oid);
-              const currentAcsUserId = sessionStorage.getItem(SESSION_ACS_USER_ID_KEY) || "";
-
-              if (me?.acsUserId && me.acsUserId !== currentAcsUserId) {
-                await upsertUserIdentityMap({
-                  tenantId: currentUser.tenantId,
-                  entraUserId: currentUser.oid,
-                  acsUserId: me.acsUserId,
-                });
-              }
-            }
-
-            const refreshedToken = await ensureSessionAcsToken({ forceRefresh: true });
-            if (!refreshedToken) throw error;
-
-            const retryItems = await getChatThreadMessagesFromAcs(selectedThreadId, refreshedToken, 100);
-            if (cancelled) return;
-
-            const retryMapped = mapAcsItemsToMessages(retryItems);
-            setRemoteMessages((prev) => ({
-              ...prev,
-              [selectedThreadId]: retryMapped,
-            }));
-            setLiveMessages((prev) => {
-              const current = prev[selectedThreadId] || [];
-              if (current.length === 0) return prev;
-
-              const fetchedIds = new Set(
-                retryMapped.map((message) => message.governance.auditId || message.id).filter(Boolean),
-              );
-              const remaining = current.filter((message) => {
-                const key = message.governance.auditId || message.id;
-                return !key || !fetchedIds.has(key);
-              });
-
-              if (remaining.length === current.length) return prev;
-              return {
-                ...prev,
-                [selectedThreadId]: remaining,
-              };
-            });
-            return;
-          } catch {
-            // Fall through to the standard error toast below.
-          }
-        }
-
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : "Failed to load thread messages.";
-        toast.error("Could not load messages", { description: message });
-      } finally {
-        if (!cancelled) {
-          setLoadingMessages(false);
-        }
-      }
-    }
-
-    void loadMessages();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedThreadId, currentUser?.oid, currentUser?.tenantId, ensureSessionAcsToken]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-
-    function asUiMessage(item: AcsIncomingMessage): ThreadUiMessage {
-      return {
-        id: item.id || `incoming-${Date.now()}`,
+  function mapAcsItemsToMessages(items: Awaited<ReturnType<typeof getChatThreadMessages>>): ThreadUiMessage[] {
+    const unique = new Map<string, ThreadUiMessage>();
+    for (const item of items) {
+      const id = item.id || `remote-${Math.random()}`;
+      const mapped: ThreadUiMessage = {
+        id,
         sender: item.senderDisplayName || item.senderId || "Participant",
         role: "Participant",
         content: item.content || "",
         sortTs: item.createdOnUtc ? new Date(item.createdOnUtc).getTime() : Date.now(),
         timestamp: item.createdOnUtc
           ? new Date(item.createdOnUtc).toLocaleTimeString("en-GB", { hour12: false })
+          : "",
+        isAI: false,
+        governance: {
+          compliance: "passed",
+          encryption: "AES-256",
+          syncStatus: "Synced from Communications API",
+          auditId: item.id || "message",
+        },
+      };
+      unique.set(id, mapped);
+    }
+    return Array.from(unique.values());
+  }
+
+  function applyFetchedMessages(threadId: string, mapped: ThreadUiMessage[]) {
+    let latestNewContent = "";
+    setRemoteMessages((prev) => {
+      const existing = prev[threadId] || [];
+      const known = new Set(existing.map((message) => message.governance.auditId || message.id).filter(Boolean));
+      const incoming = mapped.filter((message) => {
+        const key = message.governance.auditId || message.id;
+        return !!key && !known.has(key);
+      });
+      if (incoming.length > 0) {
+        latestNewContent = incoming[incoming.length - 1].content;
+      }
+      return {
+        ...prev,
+        [threadId]: mapped,
+      };
+    });
+
+    setLiveMessages((prev) => {
+      const current = prev[threadId] || [];
+      if (current.length === 0) return prev;
+
+      const fetchedIds = new Set(
+        mapped.map((message) => message.governance.auditId || message.id).filter(Boolean),
+      );
+      const remaining = current.filter((message) => {
+        const key = message.governance.auditId || message.id;
+        return !key || !fetchedIds.has(key);
+      });
+
+      if (remaining.length === current.length) return prev;
+      return {
+        ...prev,
+        [threadId]: remaining,
+      };
+    });
+
+    if (latestNewContent) {
+      onIncomingThreadActivity?.({ threadId, content: latestNewContent });
+    }
+  }
+
+  const loadMessages = useCallback(async (options?: { silent?: boolean }) => {
+    if (!selectedThreadId) return;
+
+    if (!options?.silent) {
+      setLoadingMessages(true);
+    }
+    try {
+      const items = await getChatThreadMessages(selectedThreadId, 100);
+      const mapped = mapAcsItemsToMessages(items);
+      applyFetchedMessages(selectedThreadId, mapped);
+    } catch (error) {
+      if (!options?.silent) {
+        const message = error instanceof Error ? error.message : "Failed to load thread messages.";
+        toast.error("Could not load messages", { description: message });
+      }
+    } finally {
+      if (!options?.silent) {
+        setLoadingMessages(false);
+      }
+    }
+  }, [onIncomingThreadActivity, selectedThreadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (cancelled) return;
+      await loadMessages();
+    }
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadMessages]);
+
+  useEffect(() => {
+    if (!selectedThreadId) return;
+
+    let disposed = false;
+    const intervalMs = 20000;
+
+    const timer = window.setInterval(() => {
+      if (disposed) return;
+      void loadMessages({ silent: true });
+    }, intervalMs);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedThreadId, loadMessages]);
+
+  useEffect(() => {
+    if (!selectedThreadId) return;
+
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+
+    function mapRealtimeEventToMessage(payload: ThreadMessageRealtimeEvent): ThreadUiMessage {
+      return {
+        id: payload.messageId || `realtime-${Date.now()}`,
+        sender: payload.senderDisplayName || "Participant",
+        role: "Participant",
+        content: payload.content || "",
+        sortTs: payload.sentAtUtc ? new Date(payload.sentAtUtc).getTime() : Date.now(),
+        timestamp: payload.sentAtUtc
+          ? new Date(payload.sentAtUtc).toLocaleTimeString("en-GB", { hour12: false })
           : new Date().toLocaleTimeString("en-GB", { hour12: false }),
         isAI: false,
         governance: {
           compliance: "passed",
           encryption: "AES-256",
-          syncStatus: "Live via ACS",
-          auditId: item.id || "message",
+          syncStatus: "Live via Communications API",
+          auditId: payload.messageId || "message",
         },
       };
     }
 
     async function subscribe() {
-      const token = await ensureSessionAcsToken();
-      if (!token || disposed) return;
-      if (token === subscribedTokenRef.current) return;
-
-      const currentAcsUserId = sessionStorage.getItem(SESSION_ACS_USER_ID_KEY) || "";
-
       try {
-        unsubscribe = await subscribeToAcsIncomingMessages(
-          token,
-          (incoming) => {
-            if (!incoming.threadId || !incoming.id) return;
-            if (incoming.senderId && currentAcsUserId && incoming.senderId === currentAcsUserId) return;
-            if (seenMessageIdsRef.current.has(incoming.id)) return;
-            seenMessageIdsRef.current.add(incoming.id);
+        unsubscribe = await subscribeToThreadMessages(selectedThreadId, (payload) => {
+          if (disposed) return;
+          const next = mapRealtimeEventToMessage(payload);
 
-            setRemoteMessages((prev) => {
-              const existing = prev[incoming.threadId] || [];
-              const existingLive = liveMessagesRef.current[incoming.threadId] || [];
-              if (
-                existing.some((m) => m.id === incoming.id || m.governance.auditId === incoming.id) ||
-                existingLive.some((m) => m.id === incoming.id || m.governance.auditId === incoming.id)
-              ) {
-                return prev;
-              }
+          setRemoteMessages((prev) => {
+            const existing = prev[payload.threadId] || [];
+            if (existing.some((message) =>
+              message.id === next.id || message.governance.auditId === next.governance.auditId)) {
+              return prev;
+            }
+            return {
+              ...prev,
+              [payload.threadId]: [...existing, next],
+            };
+          });
 
-              return {
-                ...prev,
-                [incoming.threadId]: [...existing, asUiMessage(incoming)],
-              };
-            });
-
-            onIncomingThreadActivity?.({ threadId: incoming.threadId, content: incoming.content || "" });
-          },
-          () => {
-            toast.error("Live chat listener error", { description: "Unable to process incoming ACS message event." });
-          },
-        );
-        subscribedTokenRef.current = token;
-      } catch (error) {
-        if (disposed) return;
-        const message = error instanceof Error ? error.message : "Failed to subscribe to ACS notifications.";
-        toast.error("Live chat unavailable", { description: message });
+          onIncomingThreadActivity?.({ threadId: payload.threadId, content: payload.content || "" });
+        });
+      } catch {
+        // Keep the polling fallback active when realtime connect fails.
       }
     }
 
     void subscribe();
     return () => {
       disposed = true;
-      subscribedTokenRef.current = "";
       unsubscribe?.();
     };
-  }, [currentUser?.oid, currentUser?.tenantId, ensureSessionAcsToken, onIncomingThreadActivity, acsTokenRevision]);
+  }, [selectedThreadId, onIncomingThreadActivity]);
 
   return {
     loadingMessages,
     messages,
-    ensureSessionAcsToken,
     appendLiveMessage,
   };
 }
