@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   getChatThreadMessagesFromAcs,
@@ -43,7 +43,9 @@ export function useThreadMessages({
   selectedThreadId,
   onIncomingThreadActivity,
 }: UseThreadMessagesOptions) {
+  const [acsTokenRevision, setAcsTokenRevision] = useState(0);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const subscribedTokenRef = useRef<string>("");
   const liveMessagesRef = useRef<Record<string, ThreadUiMessage[]>>({});
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [remoteMessages, setRemoteMessages] = useState<Record<string, ThreadUiMessage[]>>({});
@@ -70,15 +72,18 @@ export function useThreadMessages({
     return Array.from(unique.values()).sort((a, b) => (a.sortTs ?? 0) - (b.sortTs ?? 0));
   }, [liveMessages, remoteMessages, selectedThreadId]);
 
-  async function ensureSessionAcsToken(options?: { forceRefresh?: boolean }): Promise<string | null> {
+  const ensureSessionAcsToken = useCallback(async (options?: { forceRefresh?: boolean }): Promise<string | null> => {
     const cached = sessionStorage.getItem(SESSION_ACS_USER_TOKEN_KEY);
     try {
       const resolved = await getAcsTokenForCurrentUser(currentUser, { forceRefresh: options?.forceRefresh });
+      if (options?.forceRefresh && resolved?.token && resolved.token !== cached) {
+        setAcsTokenRevision((value) => value + 1);
+      }
       return resolved?.token ?? cached ?? null;
     } catch {
       return cached ?? null;
     }
-  }
+  }, [currentUser?.oid, currentUser?.tenantId]);
 
   function appendLiveMessage(threadId: string, message: ThreadUiMessage) {
     setLiveMessages((prev) => ({
@@ -234,7 +239,7 @@ export function useThreadMessages({
     return () => {
       cancelled = true;
     };
-  }, [selectedThreadId, currentUser.oid, currentUser.tenantId, ensureSessionAcsToken]);
+  }, [selectedThreadId, currentUser?.oid, currentUser?.tenantId, ensureSessionAcsToken]);
 
   useEffect(() => {
     let disposed = false;
@@ -263,6 +268,7 @@ export function useThreadMessages({
     async function subscribe() {
       const token = await ensureSessionAcsToken();
       if (!token || disposed) return;
+      if (token === subscribedTokenRef.current) return;
 
       const currentAcsUserId = sessionStorage.getItem(SESSION_ACS_USER_ID_KEY) || "";
 
@@ -297,6 +303,7 @@ export function useThreadMessages({
             toast.error("Live chat listener error", { description: "Unable to process incoming ACS message event." });
           },
         );
+        subscribedTokenRef.current = token;
       } catch (error) {
         if (disposed) return;
         const message = error instanceof Error ? error.message : "Failed to subscribe to ACS notifications.";
@@ -307,9 +314,10 @@ export function useThreadMessages({
     void subscribe();
     return () => {
       disposed = true;
+      subscribedTokenRef.current = "";
       unsubscribe?.();
     };
-  }, [currentUser.oid, currentUser.tenantId, ensureSessionAcsToken, onIncomingThreadActivity]);
+  }, [currentUser?.oid, currentUser?.tenantId, ensureSessionAcsToken, onIncomingThreadActivity, acsTokenRevision]);
 
   return {
     loadingMessages,
