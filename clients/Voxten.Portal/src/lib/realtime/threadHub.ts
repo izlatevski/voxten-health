@@ -46,6 +46,7 @@ async function ensureConnection(): Promise<HubConnection> {
 
   const next = new HubConnectionBuilder()
     .withUrl(`${resolveHubBaseUrl()}/hubs/threads`, {
+      withCredentials: false,
       accessTokenFactory: async () => (await getApiAccessToken()) ?? "",
     })
     .withAutomaticReconnect()

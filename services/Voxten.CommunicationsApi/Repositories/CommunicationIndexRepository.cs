@@ -313,7 +313,10 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
 
     private static TableClient BuildTableClient(IConfiguration configuration, string tableNameConfigKey, string defaultTableName)
     {
-        var tableName = configuration[tableNameConfigKey] ?? defaultTableName;
+        var configuredTableName = configuration[tableNameConfigKey];
+        var tableName = string.IsNullOrWhiteSpace(configuredTableName)
+            ? defaultTableName
+            : configuredTableName;
         var tableServiceUri = configuration["Storage:TableServiceUri"]
                               ?? configuration["AZURE_TABLES_SERVICE_URI"];
 

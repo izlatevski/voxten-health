@@ -14,27 +14,19 @@ AddAuthentication(builder);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSignalR();
+builder.Services.AddMemoryCache();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("PortalCors", policy =>
     {
-        var allowedOrigins = builder.Configuration
-            .GetSection("Cors:AllowedOrigins")
-            .Get<string[]>() ?? [];
-
-        if (allowedOrigins.Length == 0)
-        {
-            allowedOrigins = ["http://localhost:8080"];
-        }
-
         policy
-            .WithOrigins(allowedOrigins)
+            .AllowAnyOrigin()
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
     });
 });
 builder.Services.AddSingleton<AcsChatService>();
+builder.Services.AddSingleton<IAcsUserTokenCache, AcsUserTokenCache>();
 builder.Services.AddSingleton<CommunicationIndexRepository>();
 
 var app = builder.Build();

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using System.Diagnostics;
 using Voxten.CommunicationsApi.Hubs;
 using Voxten.CommunicationsApi.Models;
 using Voxten.CommunicationsApi.Realtime;
@@ -17,6 +18,8 @@ namespace Voxten.CommunicationsApi.Controllers;
 public sealed class CommunicationsController(
     AcsChatService chatService,
     CommunicationIndexRepository indexRepository,
+    IAcsUserTokenCache tokenCache,
+    ILogger<CommunicationsController> logger,
     IHubContext<ThreadsHub> threadsHub) : ControllerBase
 {
     [HttpPost("chat/tokens")]
@@ -358,6 +361,7 @@ public sealed class CommunicationsController(
     [HttpPost("chat/messages")]
     public async Task<IActionResult> SendChatMessage([FromBody] SendChatMessageRequest request, CancellationToken ct)
     {
+        var totalSw = Stopwatch.StartNew();
         var tenantId = request.TenantId ?? GetCallerTenant();
         if (string.IsNullOrWhiteSpace(tenantId))
         {
@@ -392,10 +396,17 @@ public sealed class CommunicationsController(
 
         try
         {
+            var tokenResolveMs = 0L;
+            var acsSendMs = 0L;
+            var signalrPublishMs = 0L;
+
             var senderToken = request.SenderToken;
             if (string.IsNullOrWhiteSpace(senderToken))
             {
+                var tokenSw = Stopwatch.StartNew();
                 senderToken = await ResolveTokenForThreadActorAsync(tenantId, request.ThreadId, senderEntraUserId, ct);
+                tokenSw.Stop();
+                tokenResolveMs = tokenSw.ElapsedMilliseconds;
                 if (string.IsNullOrWhiteSpace(senderToken))
                 {
                     return Forbid();
@@ -406,18 +417,23 @@ public sealed class CommunicationsController(
             request.TenantId = tenantId;
             request.SenderEntraUserId = senderEntraUserId;
 
+            var acsSw = Stopwatch.StartNew();
             var sent = await chatService.SendChatMessageAsync(request, ct);
+            acsSw.Stop();
+            acsSendMs = acsSw.ElapsedMilliseconds;
 
-            await indexRepository.UpsertUserThreadIndexEntriesAsync(
-                tenantId,
-                request.ThreadId,
-                topic: string.Empty,
-                lastMessagePreview: BuildMessagePreview(request.Content),
-                lastMessageAtUtc: sent.SentAt,
-                senderEntraUserId: senderEntraUserId,
-                complianceState: request.ComplianceState,
-                ct);
+            // Temporarily disabled to keep send path lean while we move index updates to background processing.
+            // await indexRepository.UpsertUserThreadIndexEntriesAsync(
+            //     tenantId,
+            //     request.ThreadId,
+            //     topic: string.Empty,
+            //     lastMessagePreview: BuildMessagePreview(request.Content),
+            //     lastMessageAtUtc: sent.SentAt,
+            //     senderEntraUserId: senderEntraUserId,
+            //     complianceState: request.ComplianceState,
+            //     ct);
 
+            var signalrSw = Stopwatch.StartNew();
             await threadsHub.Clients
                 .Group(ThreadsHub.GroupForThread(request.ThreadId))
                 .SendAsync(
@@ -432,11 +448,32 @@ public sealed class CommunicationsController(
                         SentAtUtc = sent.SentAt
                     },
                     ct);
+            signalrSw.Stop();
+            signalrPublishMs = signalrSw.ElapsedMilliseconds;
+
+            totalSw.Stop();
+            logger.LogInformation(
+                "chat.send timing tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} tokenResolveMs={TokenResolveMs} acsSendMs={AcsSendMs} signalrPublishMs={SignalRPublishMs} totalMs={TotalMs}",
+                tenantId,
+                request.ThreadId,
+                senderEntraUserId,
+                tokenResolveMs,
+                acsSendMs,
+                signalrPublishMs,
+                totalSw.ElapsedMilliseconds);
 
             return Ok(sent);
         }
         catch (Exception ex)
         {
+            totalSw.Stop();
+            logger.LogWarning(
+                ex,
+                "chat.send failed tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} totalMs={TotalMs}",
+                tenantId,
+                request.ThreadId,
+                senderEntraUserId,
+                totalSw.ElapsedMilliseconds);
             return ToErrorResult(ex);
         }
     }
@@ -758,15 +795,18 @@ public sealed class CommunicationsController(
 
     private async Task<string?> ResolveTokenForEntraUserAsync(string tenantId, string entraUserId, string acsUserId, CancellationToken ct)
     {
-        var issued = await chatService.IssueTokenAsync(new IssueTokenRequest
-        {
-            UserId = acsUserId,
-            IncludeVoip = false,
-            TenantId = tenantId,
-            EntraUserId = entraUserId
-        }, ct);
-
-        return issued.Token;
+        return await tokenCache.GetTokenAsync(
+            tenantId,
+            entraUserId,
+            acsUserId,
+            async tokenCt => await chatService.IssueTokenAsync(new IssueTokenRequest
+            {
+                UserId = acsUserId,
+                IncludeVoip = false,
+                TenantId = tenantId,
+                EntraUserId = entraUserId
+            }, tokenCt),
+            ct);
     }
 
     private IActionResult ToErrorResult(Exception ex)

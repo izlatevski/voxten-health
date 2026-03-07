@@ -39,6 +39,12 @@ bin/
 obj/
 TestResults/
 **/appsettings.Development.json
+services/Voxten.PortalApi/bin/
+services/Voxten.PortalApi/opt/
+services/Voxten.PortalApi/out/
+services/Voxten.CommunicationsApi/bin/
+services/Voxten.CommunicationsApi/opt/
+services/Voxten.CommunicationsApi/out/
 
 # Azure Functions local settings
 local.settings.json

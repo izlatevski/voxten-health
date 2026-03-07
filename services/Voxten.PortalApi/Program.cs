@@ -18,17 +18,8 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("PortalUiCors", policy =>
     {
-        var allowedOrigins = builder.Configuration
-            .GetSection("Cors:AllowedOrigins")
-            .Get<string[]>() ?? [];
-
-        if (allowedOrigins.Length == 0)
-        {
-            allowedOrigins = ["http://localhost:8080"];
-        }
-
         policy
-            .WithOrigins(allowedOrigins)
+            .AllowAnyOrigin()
             .AllowAnyHeader()
             .AllowAnyMethod();
     });

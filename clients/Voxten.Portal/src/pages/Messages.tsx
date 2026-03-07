@@ -377,7 +377,6 @@ export default function Messages() {
                         <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center flex-shrink-0">{t.unread}</span>
                       )}
                     </div>
-                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">{t.preview}</p>
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       <Badge variant="outline" className={cn('text-[9px] px-1 py-0 h-3.5', govCfg.style)}>{govCfg.label}</Badge>
                       <span className="text-[10px] text-muted-foreground ml-auto">{t.lastActivity}</span>
