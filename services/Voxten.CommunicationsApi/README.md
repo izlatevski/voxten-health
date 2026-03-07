@@ -29,14 +29,17 @@ Set the following values via environment variables, user-secrets, appsettings, o
 
 - `ACS_ENDPOINT`
 - `ACS_CONNECTION_STRING`
-- `Storage:ConnectionString` (or `AZURE_TABLES_CONNECTION_STRING` / `AzureWebJobsStorage`)
+- `Storage:TableServiceUri` (preferred in Azure with Managed Identity), for example `https://<account>.table.core.windows.net`
+- `Storage:ManagedIdentityClientId` (optional; only for user-assigned managed identity)
+- `Storage:ConnectionString` (fallback for local/dev; or `AZURE_TABLES_CONNECTION_STRING` / `AzureWebJobsStorage`)
 - `Storage:UserIdentityTableName` (optional, default `UserIdentityMap`)
 - `Storage:UserThreadIndexTableName` (optional, default `UserThreadIndex`)
 - `Storage:ThreadParticipantsTableName` (optional, default `ThreadParticipants`)
+- `Storage:ThreadMetadataTableName` (optional, default `ThreadMetadata`)
 - `KeyVault:Uri` (optional)
-- `Identity:TenantId` (optional)
-- `Identity:ClientId` (optional)
-- `Identity:Secret` (optional)
+- `Authentication:TenantId` (optional)
+- `Authentication:ClientId` (optional)
+- `Authentication:Secret` (optional)
 
 ## Local run
 

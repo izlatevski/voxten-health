@@ -1,5 +1,7 @@
 using Azure;
+using Azure.Core;
 using Azure.Data.Tables;
+using Azure.Identity;
 using Voxten.CommunicationsApi.Data;
 using Voxten.CommunicationsApi.Models;
 
@@ -311,16 +313,40 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
 
     private static TableClient BuildTableClient(IConfiguration configuration, string tableNameConfigKey, string defaultTableName)
     {
-        var connectionString = configuration["Storage:ConnectionString"]
-                               ?? configuration["AZURE_TABLES_CONNECTION_STRING"]
-                               ?? configuration["AzureWebJobsStorage"];
+        var tableName = configuration[tableNameConfigKey] ?? defaultTableName;
+        var tableServiceUri = configuration["Storage:TableServiceUri"]
+                              ?? configuration["AZURE_TABLES_SERVICE_URI"];
+
+        if (!string.IsNullOrWhiteSpace(tableServiceUri))
+        {
+            if (!Uri.TryCreate(tableServiceUri, UriKind.Absolute, out var serviceUri))
+            {
+                throw new InvalidOperationException("Storage:TableServiceUri is not a valid absolute URI.");
+            }
+
+            return new TableClient(serviceUri, tableName, BuildStorageCredential(configuration));
+        }
+
+        var connectionString = configuration["Storage:ConnectionString"];
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            throw new InvalidOperationException("Storage connection string is not configured. Use Storage:ConnectionString, AZURE_TABLES_CONNECTION_STRING, or AzureWebJobsStorage.");
+            throw new InvalidOperationException(
+                "Table storage is not configured. Set Storage:TableServiceUri for Managed Identity " +
+                "(preferred in Azure), or Storage:ConnectionString for local fallback.");
         }
 
-        var tableName = configuration[tableNameConfigKey] ?? defaultTableName;
         return new TableClient(connectionString, tableName);
+    }
+
+    private static TokenCredential BuildStorageCredential(IConfiguration configuration)
+    {
+        var managedIdentityClientId = configuration["Storage:ManagedIdentityClientId"];
+        return string.IsNullOrWhiteSpace(managedIdentityClientId)
+            ? new DefaultAzureCredential()
+            : new DefaultAzureCredential(new DefaultAzureCredentialOptions
+            {
+                ManagedIdentityClientId = managedIdentityClientId
+            });
     }
 }
