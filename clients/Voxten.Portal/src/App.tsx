@@ -6,10 +6,10 @@ import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { getSessionJwtToken } from "@/auth/entra";
+import { getApiAccessToken } from "@/auth/tokenManager";
 import { hasAnyRole } from "@/auth/roles";
 import { buildCurrentUser } from "@/auth/currentUser";
-import { issueAcsTokenForUser, SESSION_ACS_USER_ID_KEY, SESSION_ACS_USER_TOKEN_KEY } from "@/lib/chatApi";
+import { getAcsTokenForCurrentUser } from "@/auth/acsTokenManager";
 import { useAppStore } from "@/stores/appStore";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -36,30 +36,26 @@ import AuthCallback from "./pages/AuthCallback";
 const queryClient = new QueryClient();
 
 function AuthStateSync() {
-  const { accounts } = useMsal();
+  const { accounts, instance } = useMsal();
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
 
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      const account = accounts[0] ?? null;
-      const sessionToken = getSessionJwtToken();
-      const user = buildCurrentUser(account, sessionToken);
+      const account = accounts[0] ?? instance.getActiveAccount() ?? null;
+      if (account) {
+        instance.setActiveAccount(account);
+      }
+
+      const apiToken = await getApiAccessToken();
+      const user = buildCurrentUser(account, apiToken);
       setCurrentUser(user);
 
       if (!user?.oid || !user.tenantId || cancelled) return;
-      if (sessionStorage.getItem(SESSION_ACS_USER_TOKEN_KEY)) return;
 
       try {
-        const token = await issueAcsTokenForUser({
-          tenantId: user.tenantId,
-          entraUserId: user.oid,
-          includeVoip: false,
-        });
-        if (cancelled) return;
-        sessionStorage.setItem(SESSION_ACS_USER_TOKEN_KEY, token.token);
-        sessionStorage.setItem(SESSION_ACS_USER_ID_KEY, token.userId);
+        await getAcsTokenForCurrentUser(user);
       } catch {
         // Best-effort sync; chat screen can reattempt after sign-in.
       }
@@ -70,7 +66,7 @@ function AuthStateSync() {
     return () => {
       cancelled = true;
     };
-  }, [accounts, setCurrentUser]);
+  }, [accounts, instance, setCurrentUser]);
 
   return null;
 }

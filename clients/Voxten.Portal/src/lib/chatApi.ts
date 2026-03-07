@@ -1,6 +1,6 @@
 import { ChatClient } from "@azure/communication-chat";
 import { AzureCommunicationTokenCredential } from "@azure/communication-common";
-import { getSessionJwtToken } from "@/auth/entra";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
 export type ComplianceVerdict = "allowed" | "redacted" | "blocked";
 
@@ -34,6 +34,12 @@ export interface ThreadParticipant {
   joinedUtc: string;
 }
 
+export interface UpsertUserIdentityMapRequest {
+  tenantId: string;
+  entraUserId: string;
+  acsUserId: string;
+}
+
 export interface ChatThreadMessageItem {
   id: string;
   content: string;
@@ -63,12 +69,6 @@ function extractAcsTextMessage(payload: any): string {
   const fromContent = typeof payload?.content === "string" ? payload.content : "";
   const fromText = typeof payload?.text === "string" ? payload.text : "";
   return (fromMessage || fromContentMessage || fromContent || fromText || "").trim();
-}
-
-function isAllowedAcsMessageType(payload: any): boolean {
-  const rawType = (payload?.type || payload?.messageType || payload?.content?.type || "").toString().toLowerCase();
-  if (!rawType) return true;
-  return rawType === "text" || rawType === "html";
 }
 
 export interface CreateChatThreadRequest {
@@ -117,15 +117,6 @@ function apiUrl(path: string): string {
   return `${baseUrl()}/api${normalizedPath}`;
 }
 
-function buildAuthHeaders(additional?: HeadersInit): HeadersInit {
-  const token = getSessionJwtToken();
-  const headers = new Headers(additional);
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  return headers;
-}
-
 async function readJsonOrError<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
@@ -140,9 +131,9 @@ async function readJsonOrError<T>(response: Response): Promise<T> {
 }
 
 export async function issueAcsTokenForUser(payload: IssueAcsTokenRequest): Promise<IssueAcsTokenResponse> {
-  const response = await fetch(apiUrl("/chat/tokens"), {
+  const response = await fetchWithAuth(apiUrl("/chat/tokens"), {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -151,8 +142,8 @@ export async function issueAcsTokenForUser(payload: IssueAcsTokenRequest): Promi
 
 export async function getThreadsForUser(tenantId: string, entraUserId: string, pageSize = 50): Promise<UserThreadIndexItem[]> {
   const endpoint = apiUrl(`/users/${encodeURIComponent(entraUserId)}/threads?tenantId=${encodeURIComponent(tenantId)}&pageSize=${pageSize}`);
-  const response = await fetch(endpoint, {
-    headers: buildAuthHeaders({ Accept: "application/json" }),
+  const response = await fetchWithAuth(endpoint, {
+    headers: { Accept: "application/json" },
   });
 
   const body = await readJsonOrError<{ items: UserThreadIndexItem[] }>(response);
@@ -161,8 +152,8 @@ export async function getThreadsForUser(tenantId: string, entraUserId: string, p
 
 export async function getThreadParticipants(tenantId: string, threadId: string): Promise<ThreadParticipant[]> {
   const endpoint = apiUrl(`/threads/${encodeURIComponent(threadId)}/participants?tenantId=${encodeURIComponent(tenantId)}`);
-  const response = await fetch(endpoint, {
-    headers: buildAuthHeaders({ Accept: "application/json" }),
+  const response = await fetchWithAuth(endpoint, {
+    headers: { Accept: "application/json" },
   });
 
   const body = await readJsonOrError<{ items: ThreadParticipant[] }>(response);
@@ -170,9 +161,9 @@ export async function getThreadParticipants(tenantId: string, threadId: string):
 }
 
 export async function sendChatMessage(payload: SendChatMessageRequest): Promise<SendChatMessageResponse> {
-  const response = await fetch(apiUrl("/chat/messages"), {
+  const response = await fetchWithAuth(apiUrl("/chat/messages"), {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -191,9 +182,6 @@ export async function getChatThreadMessagesFromAcs(threadId: string, userToken: 
 
   for await (const message of threadClient.listMessages()) {
     const content = extractAcsTextMessage(message);
-    if (!isAllowedAcsMessageType(message)) {
-      continue;
-    }
     if (!content) {
       continue;
     }
@@ -268,9 +256,6 @@ export async function subscribeToAcsIncomingMessages(
   const handler = (event: any) => {
     try {
       const content = extractAcsTextMessage(event);
-      if (!isAllowedAcsMessageType(event)) {
-        return;
-      }
       if (!content) {
         return;
       }
@@ -299,9 +284,9 @@ export async function subscribeToAcsIncomingMessages(
 }
 
 export async function createChatThread(payload: CreateChatThreadRequest): Promise<CreateChatThreadResponse> {
-  const response = await fetch(apiUrl("/chat/threads"), {
+  const response = await fetchWithAuth(apiUrl("/chat/threads"), {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -310,7 +295,7 @@ export async function createChatThread(payload: CreateChatThreadRequest): Promis
 
 export async function getMappedAcsUserId(tenantId: string, entraUserId: string): Promise<string | null> {
   const endpoint = apiUrl(`/mappings/users/${encodeURIComponent(entraUserId)}?tenantId=${encodeURIComponent(tenantId)}`);
-  const response = await fetch(endpoint, { headers: buildAuthHeaders({ Accept: "application/json" }) });
+  const response = await fetchWithAuth(endpoint, { headers: { Accept: "application/json" } });
 
   if (response.status === 404) {
     return null;
@@ -318,6 +303,16 @@ export async function getMappedAcsUserId(tenantId: string, entraUserId: string):
 
   const body = await readJsonOrError<{ acsUserId?: string }>(response);
   return body.acsUserId || null;
+}
+
+export async function upsertUserIdentityMap(payload: UpsertUserIdentityMapRequest): Promise<void> {
+  const response = await fetchWithAuth(apiUrl("/mappings/users"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  await readJsonOrError<Record<string, never>>(response);
 }
 
 export async function ensureAcsUserIdForEntra(tenantId: string, entraUserId: string): Promise<string> {

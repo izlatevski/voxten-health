@@ -7,12 +7,10 @@ const authority = import.meta.env.VITE_ENTRA_AUTHORITY ?? `https://login.microso
 const redirectUri = import.meta.env.VITE_ENTRA_REDIRECT_URI ?? `${window.location.origin}/auth/callback`;
 const postLogoutRedirectUri = import.meta.env.VITE_ENTRA_POST_LOGOUT_REDIRECT_URI ?? window.location.origin;
 
-const oidcScopes = new Set(["openid", "profile", "email", "offline_access"]);
 
 function normalizeScope(scope: string): string {
   const trimmed = scope.trim();
   if (!trimmed) return "";
-  if (oidcScopes.has(trimmed)) return trimmed;
 
   const cleaned = trimmed.replace(/^\/+/, "");
   if (!cleaned) return "";
@@ -55,37 +53,3 @@ export const loginRequest: RedirectRequest = {
 };
 
 export const SESSION_JWT_KEY = "voxten.auth.jwt";
-
-function readTokenSecret(raw: string): string | null {
-  try {
-    const parsed = JSON.parse(raw) as { secret?: string; credentialType?: string };
-    return typeof parsed.secret === "string" && parsed.secret ? parsed.secret : null;
-  } catch {
-    return null;
-  }
-}
-
-export function getSessionJwtToken(): string | null {
-  const explicit = sessionStorage.getItem(SESSION_JWT_KEY);
-  if (explicit) return explicit;
-
-  let idToken: string | null = null;
-  for (let i = 0; i < sessionStorage.length; i += 1) {
-    const key = sessionStorage.key(i);
-    if (!key) continue;
-    const value = sessionStorage.getItem(key);
-    if (!value) continue;
-
-    if (key.includes("-accesstoken-")) {
-      const token = readTokenSecret(value);
-      if (token) return token;
-    }
-
-    if (key.includes("-idtoken-")) {
-      const token = readTokenSecret(value);
-      if (token) idToken = token;
-    }
-  }
-
-  return idToken;
-}

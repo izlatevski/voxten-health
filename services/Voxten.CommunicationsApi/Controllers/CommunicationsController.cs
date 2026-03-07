@@ -356,12 +356,13 @@ public sealed class CommunicationsController(
             return true;
         }
 
-        if (IsAdmin())
+        if (IsPrivilegedCaller())
         {
             return true;
         }
 
         var callerTenant = User.FindFirstValue("tid");
+        callerTenant ??= User.FindFirstValue("http://schemas.microsoft.com/identity/claims/tenantid");
         return !string.IsNullOrWhiteSpace(callerTenant)
             && string.Equals(callerTenant, tenantId, StringComparison.OrdinalIgnoreCase);
     }
@@ -373,12 +374,14 @@ public sealed class CommunicationsController(
             return true;
         }
 
-        if (IsAdmin())
+        if (IsPrivilegedCaller())
         {
             return true;
         }
 
-        var callerOid = User.FindFirstValue("oid") ?? User.FindFirstValue("sub");
+        var callerOid = User.FindFirstValue("oid")
+            ?? User.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier")
+            ?? User.FindFirstValue("sub");
         return !string.IsNullOrWhiteSpace(callerOid)
             && string.Equals(callerOid, entraUserId, StringComparison.OrdinalIgnoreCase);
     }
@@ -388,5 +391,28 @@ public sealed class CommunicationsController(
         var roleClaims = User.FindAll("roles").Select(c => c.Value)
             .Concat(User.FindAll(ClaimTypes.Role).Select(c => c.Value));
         return roleClaims.Any(role => string.Equals(role, "Voxten.Admin", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool IsPrivilegedCaller()
+    {
+        if (IsAdmin())
+        {
+            return true;
+        }
+
+        var roles = User.FindAll("roles").Select(c => c.Value)
+            .Concat(User.FindAll(ClaimTypes.Role).Select(c => c.Value));
+        if (roles.Any(role =>
+            string.Equals(role, "Voxten.Security", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(role, "Voxten.Compliance", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var scopeClaim = User.FindFirstValue("scp") ?? string.Empty;
+        var scopes = scopeClaim
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return scopes.Contains("Governance.Write", StringComparer.OrdinalIgnoreCase)
+            || scopes.Contains("ACS.Access", StringComparer.OrdinalIgnoreCase);
     }
 }
