@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
+  ComplianceBlockedError,
   deleteChatThread,
   getThreadParticipants,
   getThreadMetadata,
@@ -276,12 +277,13 @@ export default function Messages() {
         senderDisplayName: currentUser?.displayName || 'Authenticated User',
         tenantId: currentUser?.tenantId,
         senderEntraUserId: currentUser?.oid,
-        complianceState: 'passed',
       });
 
+      const complianceState = result.complianceState ?? 'passed';
       const timestamp = new Date().toLocaleTimeString('en-GB', { hour12: false });
       const auditId = result.messageId || `msg-${Date.now()}`;
 
+      // For redacted messages the server substituted content — we show what was actually sent
       const next: ThreadUiMessage = {
         id: `live-${Date.now()}`,
         sender: currentUser?.displayName || 'Authenticated User',
@@ -291,7 +293,7 @@ export default function Messages() {
         timestamp,
         isAI: false,
         governance: {
-          compliance: 'passed',
+          compliance: complianceState,
           encryption: 'AES-256',
           syncStatus: 'Sent via Communications API',
           auditId,
@@ -300,18 +302,36 @@ export default function Messages() {
 
       appendLiveMessage(selectedThreadId, next);
 
-      setLastOutcome({
-        verdict: 'allowed',
-        auditId,
-      });
+      setLastOutcome({ verdict: complianceState, auditId });
     } catch (error) {
+      if (error instanceof ComplianceBlockedError) {
+        // Insert a local blocked marker so the sender sees the rejection inline
+        const timestamp = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        const blocked: ThreadUiMessage = {
+          id: `blocked-${Date.now()}`,
+          sender: currentUser?.displayName || 'Authenticated User',
+          role: (currentUser?.roles?.[0] || currentUser?.jobTitle || 'User').replace(/^Voxten\./, ''),
+          content: `⛔ Message blocked by compliance policy. Rules: ${error.rulesFired.join(', ') || 'policy'}`,
+          sortTs: Date.now(),
+          timestamp,
+          isAI: false,
+          type: 'blocked',
+          governance: {
+            compliance: 'blocked',
+            encryption: 'AES-256',
+            syncStatus: 'Blocked — not delivered',
+            auditId: error.auditId,
+          },
+        };
+        appendLiveMessage(selectedThreadId, blocked);
+        setLastOutcome({ verdict: 'blocked', auditId: error.auditId, reason: error.rulesFired.join(', ') });
+        // Keep compose text so the user can edit and retry
+        return;
+      }
+
       const msg = error instanceof Error ? error.message : 'Unexpected API error.';
       toast.error('Failed to send message', { description: msg });
-      setLastOutcome({
-        verdict: 'blocked',
-        auditId: 'send-failed',
-        reason: 'API request failed',
-      });
+      setLastOutcome({ verdict: 'blocked', auditId: 'send-failed', reason: 'API request failed' });
     } finally {
       setSending(false);
     }

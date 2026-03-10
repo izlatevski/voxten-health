@@ -8,6 +8,7 @@ export interface ThreadMessageRealtimeEvent {
   senderDisplayName?: string;
   senderEntraUserId?: string;
   sentAtUtc: string;
+  complianceState?: string;
 }
 
 export interface ThreadLeftRealtimeEvent {

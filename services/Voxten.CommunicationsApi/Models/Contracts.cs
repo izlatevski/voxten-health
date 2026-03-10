@@ -57,6 +57,7 @@ public sealed class SendChatMessageResponse
 {
     public string MessageId { get; set; } = string.Empty;
     public DateTimeOffset SentAt { get; set; }
+    public string ComplianceState { get; set; } = "unknown";
 }
 
 public sealed class ChatThreadMessageItem

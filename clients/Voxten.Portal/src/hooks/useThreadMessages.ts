@@ -25,6 +25,13 @@ export interface ThreadUiMessage {
   type?: "message" | "system" | "blocked";
 }
 
+type ComplianceState = ThreadUiMessage["governance"]["compliance"];
+
+function normalizeComplianceState(raw?: string): ComplianceState {
+  if (raw === "flagged" || raw === "redacted" || raw === "blocked") return raw;
+  return "passed";
+}
+
 interface UseThreadMessagesOptions {
   selectedThreadId: string;
   onIncomingThreadActivity?: (activity: { threadId: string; content: string }) => void;
@@ -202,7 +209,7 @@ export function useThreadMessages({
           : new Date().toLocaleTimeString("en-GB", { hour12: false }),
         isAI: false,
         governance: {
-          compliance: "passed",
+          compliance: normalizeComplianceState(payload.complianceState),
           encryption: "AES-256",
           syncStatus: "Live via Communications API",
           auditId: payload.messageId || "message",

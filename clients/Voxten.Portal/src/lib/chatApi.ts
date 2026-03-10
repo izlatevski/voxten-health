@@ -1,6 +1,17 @@
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
-export type ComplianceVerdict = "allowed" | "redacted" | "blocked";
+export type ComplianceVerdict = "passed" | "flagged" | "redacted" | "blocked";
+
+export class ComplianceBlockedError extends Error {
+  constructor(
+    public readonly auditId: string,
+    public readonly rulesFired: string[],
+    public readonly complianceState: string,
+  ) {
+    super(`Message blocked by compliance policy. Audit: ${auditId}`);
+    this.name = "ComplianceBlockedError";
+  }
+}
 
 export interface UserThreadIndexItem {
   threadId: string;
@@ -66,6 +77,7 @@ export interface SendChatMessageRequest {
 export interface SendChatMessageResponse {
   messageId: string;
   sentAt: string;
+  complianceState: ComplianceVerdict;
 }
 
 function baseUrl(): string {
@@ -81,6 +93,19 @@ function apiUrl(path: string): string {
 }
 
 async function readJsonOrError<T>(response: Response): Promise<T> {
+  if (response.status === 422) {
+    const body = await response.json().catch(() => ({})) as {
+      auditId?: string;
+      complianceState?: string;
+      rulesFired?: string[];
+    };
+    throw new ComplianceBlockedError(
+      body.auditId ?? "unknown",
+      body.rulesFired ?? [],
+      body.complianceState ?? "blocked",
+    );
+  }
+
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Communications API request failed (${response.status}): ${body || response.statusText}`);

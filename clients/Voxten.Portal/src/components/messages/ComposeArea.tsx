@@ -65,14 +65,17 @@ export function ComposeArea({
         <div
           className={cn(
             "mb-2 px-3 py-1.5 rounded border text-[11px]",
-            lastOutcome.verdict === "allowed"
+            lastOutcome.verdict === "passed"
               ? "bg-success/10 border-success/20 text-success"
-              : lastOutcome.verdict === "redacted"
+              : lastOutcome.verdict === "flagged"
                 ? "bg-urgent/10 border-urgent/20 text-urgent"
-                : "bg-stat/10 border-stat/20 text-stat",
+                : lastOutcome.verdict === "redacted"
+                  ? "bg-urgent/10 border-urgent/20 text-urgent"
+                  : "bg-stat/10 border-stat/20 text-stat",
           )}
         >
-          {lastOutcome.verdict === "allowed" && `✓ Sent — audit ${lastOutcome.auditId}`}
+          {lastOutcome.verdict === "passed" && `✓ Sent — audit ${lastOutcome.auditId}`}
+          {lastOutcome.verdict === "flagged" && `⚠ Sent (flagged) — audit ${lastOutcome.auditId}`}
           {lastOutcome.verdict === "redacted" && `⚠ Sent with redaction — audit ${lastOutcome.auditId}`}
           {lastOutcome.verdict === "blocked" && `⛔ Blocked — audit ${lastOutcome.auditId}${lastOutcome.reason ? ` (${lastOutcome.reason})` : ""}`}
         </div>

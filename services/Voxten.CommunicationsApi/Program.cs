@@ -2,6 +2,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Voxten.CommunicationsApi.Compliance;
 using Voxten.CommunicationsApi.Hubs;
 using Voxten.CommunicationsApi.Repositories;
 using Voxten.CommunicationsApi.Services;
@@ -28,6 +29,26 @@ builder.Services.AddCors(options =>
 builder.Services.AddSingleton<AcsChatService>();
 builder.Services.AddSingleton<IAcsUserTokenCache, AcsUserTokenCache>();
 builder.Services.AddSingleton<CommunicationIndexRepository>();
+
+var complianceBaseUrl = builder.Configuration["ComplianceApi:BaseUrl"];
+if (!string.IsNullOrWhiteSpace(complianceBaseUrl))
+{
+    builder.Services.AddHttpClient<ComplianceClient>(client =>
+    {
+        client.BaseAddress = new Uri(complianceBaseUrl);
+        client.Timeout = TimeSpan.FromSeconds(10);
+    });
+}
+else
+{
+    // No ComplianceApi configured — register a no-op client so the controller
+    // can still be injected; it will fail-open on every call.
+    builder.Services.AddHttpClient<ComplianceClient>(client =>
+    {
+        client.BaseAddress = new Uri("http://localhost:5008");
+        client.Timeout = TimeSpan.FromSeconds(5);
+    });
+}
 
 var app = builder.Build();
 

@@ -8,5 +8,6 @@ public sealed class ThreadMessageRealtimeEvent
     public string? SenderDisplayName { get; set; }
     public string? SenderEntraUserId { get; set; }
     public DateTimeOffset SentAtUtc { get; set; }
+    public string ComplianceState { get; set; } = "unknown";
 }
 

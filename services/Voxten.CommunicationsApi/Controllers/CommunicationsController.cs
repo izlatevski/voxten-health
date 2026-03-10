@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using System.Diagnostics;
+using Voxten.CommunicationsApi.Compliance;
 using Voxten.CommunicationsApi.Hubs;
 using Voxten.CommunicationsApi.Models;
 using Voxten.CommunicationsApi.Realtime;
@@ -19,6 +20,7 @@ public sealed class CommunicationsController(
     AcsChatService chatService,
     CommunicationIndexRepository indexRepository,
     IAcsUserTokenCache tokenCache,
+    ComplianceClient complianceClient,
     ILogger<CommunicationsController> logger,
     IHubContext<ThreadsHub> threadsHub) : ControllerBase
 {
@@ -397,6 +399,7 @@ public sealed class CommunicationsController(
         try
         {
             var tokenResolveMs = 0L;
+            var complianceMs = 0L;
             var acsSendMs = 0L;
             var signalrPublishMs = 0L;
 
@@ -417,21 +420,65 @@ public sealed class CommunicationsController(
             request.TenantId = tenantId;
             request.SenderEntraUserId = senderEntraUserId;
 
+            // --- Compliance evaluation (before ACS send) ---
+            var messageId = Guid.CreateVersion7().ToString();
+            var senderParticipant = await indexRepository.GetThreadParticipantAsync(tenantId, request.ThreadId, senderEntraUserId, ct);
+
+            var complianceSw = Stopwatch.StartNew();
+            var complianceResult = await complianceClient.EvaluateAsync(new ComplianceEvaluationRequest
+            {
+                MessageId = messageId,
+                Content = request.Content,
+                SenderId = senderEntraUserId,
+                SenderRole = senderParticipant?.Role,
+                ThreadId = request.ThreadId,
+                Channel = "SecureChat",
+                Direction = "Inbound"
+            }, ct);
+            complianceSw.Stop();
+            complianceMs = complianceSw.ElapsedMilliseconds;
+
+            var complianceState = complianceResult?.ComplianceState ?? "unknown";
+
+            if (complianceState == "blocked")
+            {
+                totalSw.Stop();
+                logger.LogWarning(
+                    "chat.send blocked by compliance tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} auditId={AuditId} rules={Rules} totalMs={TotalMs}",
+                    tenantId,
+                    request.ThreadId,
+                    senderEntraUserId,
+                    complianceResult!.AuditId,
+                    string.Join(", ", complianceResult.RulesFired),
+                    totalSw.ElapsedMilliseconds);
+
+                return StatusCode(StatusCodes.Status422UnprocessableEntity, new
+                {
+                    error = "Message blocked by compliance policy.",
+                    complianceState,
+                    auditId = complianceResult.AuditId,
+                    rulesFired = complianceResult.RulesFired
+                });
+            }
+
+            // Apply redacted content if compliance engine produced one
+            if (complianceResult?.RedactedContent is not null)
+                request.Content = complianceResult.RedactedContent;
+
             var acsSw = Stopwatch.StartNew();
             var sent = await chatService.SendChatMessageAsync(request, ct);
             acsSw.Stop();
             acsSendMs = acsSw.ElapsedMilliseconds;
 
-            // Temporarily disabled to keep send path lean while we move index updates to background processing.
-            // await indexRepository.UpsertUserThreadIndexEntriesAsync(
-            //     tenantId,
-            //     request.ThreadId,
-            //     topic: string.Empty,
-            //     lastMessagePreview: BuildMessagePreview(request.Content),
-            //     lastMessageAtUtc: sent.SentAt,
-            //     senderEntraUserId: senderEntraUserId,
-            //     complianceState: request.ComplianceState,
-            //     ct);
+            await indexRepository.UpsertUserThreadIndexEntriesAsync(
+                tenantId,
+                request.ThreadId,
+                topic: string.Empty,
+                lastMessagePreview: BuildMessagePreview(request.Content),
+                lastMessageAtUtc: sent.SentAt,
+                senderEntraUserId: senderEntraUserId,
+                complianceState: complianceState,
+                ct);
 
             var signalrSw = Stopwatch.StartNew();
             await threadsHub.Clients
@@ -445,7 +492,8 @@ public sealed class CommunicationsController(
                         Content = request.Content,
                         SenderDisplayName = request.SenderDisplayName,
                         SenderEntraUserId = senderEntraUserId,
-                        SentAtUtc = sent.SentAt
+                        SentAtUtc = sent.SentAt,
+                        ComplianceState = complianceState
                     },
                     ct);
             signalrSw.Stop();
@@ -453,15 +501,18 @@ public sealed class CommunicationsController(
 
             totalSw.Stop();
             logger.LogInformation(
-                "chat.send timing tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} tokenResolveMs={TokenResolveMs} acsSendMs={AcsSendMs} signalrPublishMs={SignalRPublishMs} totalMs={TotalMs}",
+                "chat.send timing tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} complianceState={ComplianceState} tokenResolveMs={TokenResolveMs} complianceMs={ComplianceMs} acsSendMs={AcsSendMs} signalrPublishMs={SignalRPublishMs} totalMs={TotalMs}",
                 tenantId,
                 request.ThreadId,
                 senderEntraUserId,
+                complianceState,
                 tokenResolveMs,
+                complianceMs,
                 acsSendMs,
                 signalrPublishMs,
                 totalSw.ElapsedMilliseconds);
 
+            sent.ComplianceState = complianceState;
             return Ok(sent);
         }
         catch (Exception ex)
