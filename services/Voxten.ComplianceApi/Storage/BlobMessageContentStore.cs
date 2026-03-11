@@ -38,4 +38,19 @@ public sealed class BlobMessageContentStore : IMessageContentStore
         _logger.LogDebug("Wrote content blob {BlobName} ({Bytes} bytes)", blobName, stream.Length);
         return blobName;
     }
+
+    /// <inheritdoc />
+    public async Task<string?> ReadAsync(string blobRef, CancellationToken ct)
+    {
+        try
+        {
+            var blob = _container.GetBlobClient(blobRef);
+            var response = await blob.DownloadContentAsync(ct);
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
 }

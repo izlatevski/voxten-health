@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../Voxten.Compliance.Data/Voxten.Compliance.Data.csproj" />
+  <Project Path="Voxten.ComplianceApi.csproj" />
+</Solution>

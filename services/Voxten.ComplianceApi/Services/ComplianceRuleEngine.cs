@@ -34,8 +34,17 @@ public class ComplianceRuleEngine(
         var aggregated = aggregator.Aggregate(outcomes);
         var complianceState = VerdictAggregator.ToComplianceState(aggregated);
 
+        logger.LogInformation(
+            "Evaluated msg={MessageId} content={Content} → {State} | rules={RuleCount} fired={FiredCount} firedIds={FiredIds}",
+            request.MessageId,
+            request.Content.Length > 80 ? request.Content[..80] + "…" : request.Content,
+            complianceState,
+            applicableRules.Count,
+            aggregated.FiredRules.Count,
+            string.Join(", ", aggregated.FiredRules.Select(r => $"{r.RuleId}({r.Verdict}/{r.DerivedAction})")));
+
         string? redactedContent = null;
-        if (complianceState is "redacted" or "flagged")
+        if (complianceState is "redacted")
         {
             var allMatches = aggregated.FiredRules
                 .SelectMany(r => ExtractMatchesFromEvidence(r.EvidenceJson))
@@ -47,7 +56,7 @@ public class ComplianceRuleEngine(
         sw.Stop();
         var auditId = Guid.CreateVersion7();
 
-        _ = PersistAsync(request, aggregated, auditId, retentionDays, cache, ct);
+        _ = PersistAsync(request, aggregated, auditId, complianceState, retentionDays, cache, ct);
 
         return new EvaluationResponse
         {
@@ -96,12 +105,19 @@ public class ComplianceRuleEngine(
                 if (logic.TryGetProperty("patternLibraryId", out var libIdEl)
                     && cache.PatternLibraries.TryGetValue(libIdEl.GetString() ?? "", out var library))
                 {
+                    logger.LogDebug("Evaluating rule={RuleId} against library={LibraryId}", rule.LogicalId, library.Id);
                     var result = patternDetection.Evaluate(request.Content, library);
                     if (result.HasMatches)
                     {
                         verdict = Verdict.Violation;
                         severity = rule.DefaultSeverity;
                         evidenceJson = JsonSerializer.Serialize(result.Matches);
+                        logger.LogWarning(
+                            "Pattern match: rule={RuleId} library={LibraryId} entities={Entities} content={Content}",
+                            rule.LogicalId,
+                            library.Id,
+                            string.Join(", ", result.Matches.Select(m => $"{m.EntityType}@{m.Position}")),
+                            request.Content.Length > 80 ? request.Content[..80] + "…" : request.Content);
                     }
                 }
             }
@@ -155,6 +171,7 @@ public class ComplianceRuleEngine(
         EvaluationRequest request,
         AggregatedVerdict aggregated,
         Guid auditId,
+        string complianceState,
         int retentionDays,
         CacheSnapshot cache,
         CancellationToken ct)
@@ -215,6 +232,7 @@ public class ComplianceRuleEngine(
             {
                 Id = auditId,
                 MessageId = messageId,
+                ComplianceState = complianceState,
                 OverallVerdict = aggregated.OverallVerdict,
                 MaxViolationSeverity = aggregated.MaxSeverity,
                 TotalRulesEvaluated = aggregated.FiredRules.Count,

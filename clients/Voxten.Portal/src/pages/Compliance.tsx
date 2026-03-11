@@ -1,19 +1,13 @@
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   ShieldCheck, FileText, Download, Calendar, Clock, Bot,
   TrendingUp, TrendingDown, AlertTriangle, Users, MessageSquare,
-  Activity, Mail, ChevronRight,
+  Activity, Mail, ChevronRight, Loader2,
 } from 'lucide-react';
-
-/* ── Metrics ── */
-const metrics = [
-  { label: 'Violations (30 days)', value: '47', trend: '↓12% from prior period', good: false, icon: AlertTriangle },
-  { label: 'Resolution Rate', value: '94.2%', trend: '↑3.1%', good: true, icon: TrendingUp },
-  { label: 'Avg Escalation Response', value: '4.2 min', trend: '↓0.8 min', good: true, icon: Clock },
-  { label: 'Communication Coverage', value: '100%', trend: 'All channels governed', good: true, icon: MessageSquare },
-];
+import { getComplianceStats } from '@/lib/complianceApi';
 
 /* ── Report Templates ── */
 const reportTemplates = [
@@ -33,6 +27,54 @@ const scheduledReports = [
 ];
 
 export default function ComplianceReports() {
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['compliance-stats', 30],
+    queryFn: () => getComplianceStats(30),
+    staleTime: 60_000,
+  });
+
+  const passRate = stats && stats.total > 0
+    ? ((stats.passed / stats.total) * 100).toFixed(1)
+    : null;
+
+  const violations = stats ? stats.flagged + stats.blocked + stats.redacted : null;
+
+  const liveMetrics = stats ? [
+    {
+      label: 'Violations (30 days)',
+      value: violations !== null ? String(violations) : '—',
+      trend: stats.total > 0 ? `of ${stats.total.toLocaleString()} total evaluations` : 'No evaluations yet',
+      good: violations === 0,
+      icon: AlertTriangle,
+    },
+    {
+      label: 'Pass Rate',
+      value: passRate !== null ? `${passRate}%` : '—',
+      trend: stats.total > 0 ? `${stats.passed.toLocaleString()} passed` : 'No data',
+      good: passRate !== null && parseFloat(passRate) >= 90,
+      icon: TrendingUp,
+    },
+    {
+      label: 'Blocked Messages',
+      value: stats ? String(stats.blocked) : '—',
+      trend: stats && stats.redacted > 0 ? `${stats.redacted} redacted` : 'None redacted',
+      good: stats?.blocked === 0,
+      icon: Clock,
+    },
+    {
+      label: 'Communication Coverage',
+      value: '100%',
+      trend: 'All channels governed',
+      good: true,
+      icon: MessageSquare,
+    },
+  ] : [
+    { label: 'Violations (30 days)', value: '—', trend: 'Loading...', good: true, icon: AlertTriangle },
+    { label: 'Pass Rate', value: '—', trend: 'Loading...', good: true, icon: TrendingUp },
+    { label: 'Blocked Messages', value: '—', trend: 'Loading...', good: true, icon: Clock },
+    { label: 'Communication Coverage', value: '100%', trend: 'All channels governed', good: true, icon: MessageSquare },
+  ];
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -62,14 +104,18 @@ export default function ComplianceReports() {
 
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {metrics.map((m) => (
+        {liveMetrics.map((m) => (
           <Card key={m.label} className={`clinical-shadow border-border ${!m.good ? 'border-destructive/20' : ''}`}>
             <CardContent className="p-3">
               <div className="flex items-center gap-1.5 mb-1">
                 <m.icon className={`w-3.5 h-3.5 ${m.good ? 'text-success' : 'text-destructive'}`} />
                 <p className="text-[11px] text-muted-foreground">{m.label}</p>
               </div>
-              <p className="text-2xl font-bold text-foreground tabular-nums">{m.value}</p>
+              {statsLoading && m.value === '—' ? (
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground my-1" />
+              ) : (
+                <p className="text-2xl font-bold text-foreground tabular-nums">{m.value}</p>
+              )}
               <span className={`flex items-center gap-0.5 text-[10px] font-medium mt-0.5 ${m.good ? 'text-success' : 'text-destructive'}`}>
                 {m.good ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
                 {m.trend}
@@ -78,6 +124,32 @@ export default function ComplianceReports() {
           </Card>
         ))}
       </div>
+
+      {/* Top Rules Fired */}
+      {stats && stats.topRulesFired.length > 0 && (
+        <Card className="clinical-shadow border-border">
+          <CardContent className="p-4">
+            <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-urgent" />
+              Top Rules Fired (Last 30 Days)
+            </h2>
+            <div className="space-y-2">
+              {stats.topRulesFired.map((r, i) => (
+                <div key={r.ruleLogicalId} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground tabular-nums w-5">{i + 1}.</span>
+                    <span className="font-mono text-foreground">{r.ruleLogicalId}</span>
+                    <span className="text-muted-foreground">v{r.ruleVersion}</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] bg-urgent/10 text-urgent border-urgent/20">
+                    {r.fireCount.toLocaleString()} fires
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Report Templates */}
       <Card className="clinical-shadow border-border">

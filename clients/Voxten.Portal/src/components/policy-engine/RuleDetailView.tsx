@@ -1,25 +1,39 @@
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import { usePolicyEngineStore, policyRules } from '@/stores/policyEngineStore';
-import { Play, Pause, Copy, History, Edit, Brain, FileCode2, Info, ExternalLink } from 'lucide-react';
+import { activateRule, deprecateRule } from '@/lib/complianceApi';
+import { formatDateTime, formatList, type PolicyRuleView } from '@/lib/policyEngine';
+import { usePolicyEngineStore } from '@/stores/policyEngineStore';
+import { CheckCircle, Copy, Edit, History, Loader2, Pause, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const severityDisplay: Record<string, { bars: string; className: string }> = {
-  critical: { bars: '■■■', className: 'text-stat' },
-  high: { bars: '■■', className: 'text-urgent' },
-  medium: { bars: '■', className: 'text-primary' },
-  low: { bars: '○', className: 'text-muted-foreground' },
+const severityDisplay: Record<string, { text: string; className: string }> = {
+  critical: { text: 'Critical', className: 'text-stat' },
+  high: { text: 'High', className: 'text-urgent' },
+  medium: { text: 'Medium', className: 'text-primary' },
+  low: { text: 'Low', className: 'text-muted-foreground' },
 };
 
-const actionColors: Record<string, string> = {
-  block: 'text-stat', flag: 'text-urgent', redact: 'text-ehr-part2', log: 'text-muted-foreground', escalate: 'text-stat',
+const actionDisplay: Record<string, string> = {
+  block: 'Block',
+  flag: 'Flag for review',
+  redact: 'Redact',
+  log: 'Log',
+  escalate: 'Escalate',
 };
 
-export function RuleDetailView() {
+interface Props {
+  rules: PolicyRuleView[];
+  onRuleChanged?: () => void;
+}
+
+export function RuleDetailView({ rules, onRuleChanged }: Props) {
   const { selectedRuleId, setDetailMode } = usePolicyEngineStore();
-  const rule = policyRules.find(r => r.id === selectedRuleId);
+  const [actionLoading, setActionLoading] = useState<'activate' | 'deprecate' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const rule = rules.find((item) => String(item.id) === selectedRuleId);
 
   if (!rule) {
     return (
@@ -29,118 +43,107 @@ export function RuleDetailView() {
     );
   }
 
-  const sv = severityDisplay[rule.severity];
+  const severityMeta = severityDisplay[rule.severity];
+
+  async function handleActivate() {
+    setActionLoading('activate');
+    setActionError(null);
+    try {
+      await activateRule(String(rule.id));
+      onRuleChanged?.();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Failed to activate rule');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleDeprecate() {
+    setActionLoading('deprecate');
+    setActionError(null);
+    try {
+      await deprecateRule(String(rule.id));
+      onRuleChanged?.();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Failed to deprecate rule');
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   return (
     <Card className="clinical-shadow border-border h-full flex flex-col">
-      {/* Header */}
       <div className="px-4 py-3 border-b border-border">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-foreground leading-tight">{rule.name}</h2>
-            <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{rule.id}</p>
+            <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+              {rule.logicalId} · v{rule.version}
+            </p>
           </div>
-          <button className="text-[11px] text-primary hover:underline flex items-center gap-1">
+          <button
+            className={cn(
+              'text-[11px] flex items-center gap-1',
+              rule.isActive ? 'text-muted-foreground cursor-not-allowed' : 'text-primary hover:underline',
+            )}
+            disabled={rule.isActive}
+            onClick={() => setDetailMode('rule-edit')}
+            title={rule.isActive ? 'Active rules cannot be edited. Create a new version instead.' : 'Edit draft or inactive rule'}
+          >
             <Edit className="w-3 h-3" /> Edit
           </button>
         </div>
       </div>
 
       <CardContent className="p-4 flex-1 overflow-y-auto space-y-4">
-        {/* Configuration */}
-        <Section title="CONFIGURATION">
-          <Row label="Regulation Pack" value={rule.packId.toUpperCase()} />
-          <Row label="Severity">
-            <span className={cn('font-semibold', sv.className)}>{sv.bars} {rule.severity.charAt(0).toUpperCase() + rule.severity.slice(1)}</span>
+        <Section title="Rule Identity">
+          <Row label="Database ID" value={String(rule.id)} />
+          <Row label="Logical ID" value={rule.logicalId} />
+          <Row label="Version" value={rule.version} />
+          <Row label="Pack" value={rule.packId} />
+          <Row label="Status">
+            <Badge variant="outline" className={cn('text-[9px]', rule.isActive ? 'text-success border-success/20 bg-success/10' : 'text-muted-foreground')}>
+              {rule.status}
+            </Badge>
           </Row>
-          <Row label="Status" value="● Active" valueClass="text-success" />
-          <Row label="Description">
-            <span className="text-foreground text-[11px] leading-relaxed">{rule.description}</span>
-          </Row>
+          <Row label="Effective" value={formatDateTime(rule.effectiveDate)} />
+          <Row label="Deprecated" value={formatDateTime(rule.deprecatedDate)} />
+          {rule.isActive ? (
+            <p className="text-[10px] text-muted-foreground">
+              Active rules are immutable in the backend. Deprecate and create a new version to change live behavior.
+            </p>
+          ) : null}
         </Section>
 
-        {/* Trigger */}
-        <Section title="TRIGGER CONDITIONS">
-          <Row label="Channels">
-            <div className="flex flex-wrap gap-1">
-              {rule.channels.map(ch => (
-                <Badge key={ch} variant="outline" className="text-[8px] px-1 h-3.5">{ch}</Badge>
-              ))}
-            </div>
-          </Row>
-          <Row label="Direction" value={rule.direction === 'both' ? 'Inbound + Outbound' : rule.direction.charAt(0).toUpperCase() + rule.direction.slice(1)} />
-          <Row label="Content" value={rule.trigger} />
+        <Section title="Classification">
+          <Row label="Category" value={rule.category} />
+          <Row label="Evaluation Type" value={rule.evalType} />
+          <Row label="Derived Method" value={rule.analysisMethod} />
+          <Row label="Severity" value={severityMeta.text} valueClass={severityMeta.className} />
+          <Row label="Primary Action" value={actionDisplay[rule.action] ?? rule.action} />
         </Section>
 
-        {/* Analysis Method */}
-        <Section title="ANALYSIS METHOD">
-          <TooltipProvider>
-            <div className="space-y-1.5">
-              <MethodRadio label="Pattern Match Only" icon={<FileCode2 className="w-3 h-3" />} selected={rule.analysisMethod === 'pattern'} />
-              <MethodRadio label="AI Semantic Only" icon={<Brain className="w-3 h-3" />} selected={rule.analysisMethod === 'ai'} />
-              <div className="flex items-center gap-1">
-                <MethodRadio label="Both (Layered)" icon={<><Brain className="w-3 h-3" /><FileCode2 className="w-3 h-3" /></>} selected={rule.analysisMethod === 'both'} />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="w-3 h-3 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-[240px] text-[11px]">
-                    Pattern match runs first (fast, cheap). If it finds potential matches, AI semantic analysis confirms or dismisses — reducing false positives while keeping costs down.
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          </TooltipProvider>
-
-          {rule.aiModel && <Row label="AI Model" value={rule.aiModel} />}
-          {rule.confidenceThreshold && <Row label="Confidence Threshold" value={rule.confidenceThreshold.toFixed(2)} />}
-          {rule.patternLibrary && <Row label="Pattern Library" value={rule.patternLibrary} />}
-          {rule.patternCount && <Row label="Patterns" value={`${rule.patternCount} active`} />}
+        <Section title="Scope">
+          <Row label="Channels" value={formatList(rule.scope.channels)} />
+          <Row label="Directions" value={formatList(rule.scope.directions)} />
+          <Row label="Sender Roles" value={formatList(rule.scope.senderRoles, 'None specified')} />
         </Section>
 
-        {/* Action */}
-        <Section title="ACTION ON MATCH">
-          <Row label="Primary">
-            <span className={cn('font-semibold capitalize', actionColors[rule.action])}>
-              {rule.action === 'block' ? '✕ Block transmission' : rule.action === 'flag' ? '⚠ Flag for review' : rule.action === 'redact' ? '↺ Redact & send' : rule.action === 'log' ? '○ Log only' : '↑ Escalate'}
-            </span>
-          </Row>
-          <Row label="Notify" value={rule.notification} />
-          <Row label="Audit" value="Log to audit trail" />
+        <Section title="Definition">
+          <Stack label="Description" value={rule.description} />
+          <Stack label="Trigger Summary" value={rule.triggerSummary} />
         </Section>
 
-        {/* Performance */}
-        <Section title="PERFORMANCE">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-            <Row label="Fired (24h)" value={String(rule.fired24h)} />
-            <Row label="Fired (30d)" value={String(rule.fired30d || 0)} />
-            <Row label="False Positive Rate" value={rule.fpRate} />
-            <Row label="Avg Eval Time" value={`${rule.avgEvalMs}ms`} />
-            {rule.avgAiMs > 0 && <Row label="Avg AI Analysis" value={`${rule.avgAiMs}ms`} />}
-          </div>
+        <Section title="Stored JSON">
+          <JsonBlock label="Scope JSON" value={rule.scopeJson} />
+          <JsonBlock label="Logic JSON" value={rule.logicJson} />
+          <JsonBlock label="Default Actions JSON" value={rule.defaultActionsJson} />
+          {rule.exemptionsJson ? <JsonBlock label="Exemptions JSON" value={rule.exemptionsJson} /> : null}
+          {rule.changelogJson ? <JsonBlock label="Changelog JSON" value={rule.changelogJson} /> : null}
         </Section>
 
-        {/* Recent Fires */}
-        {rule.recentFires && rule.recentFires.length > 0 && (
-          <Section title="RECENT FIRES">
-            <div className="space-y-2">
-              {rule.recentFires.map((f, i) => (
-                <div key={i} className="text-[11px] leading-relaxed">
-                  <span className="text-muted-foreground">{f.date}</span>
-                  <span className={cn('ml-1 font-semibold', f.action === 'BLOCK' ? 'text-stat' : f.action === 'FLAG' ? 'text-urgent' : 'text-ehr-part2')}>
-                    — {f.action}
-                  </span>
-                  <span className="text-foreground ml-1">— {f.summary}</span>
-                  <button className="text-primary text-[10px] flex items-center gap-0.5 mt-0.5 hover:underline">
-                    <ExternalLink className="w-2.5 h-2.5" /> View audit event
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
+        {actionError ? <p className="text-[11px] text-stat">{actionError}</p> : null}
 
-        {/* Actions */}
         <div className="border-t border-border pt-3 flex flex-wrap gap-2">
           <Button
             size="sm"
@@ -149,13 +152,33 @@ export function RuleDetailView() {
           >
             <Play className="w-3 h-3" /> Test This Rule
           </Button>
-          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5">
-            <Pause className="w-3 h-3" /> Pause Rule
-          </Button>
-          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5">
+          {rule.isActive ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1.5"
+              onClick={handleDeprecate}
+              disabled={!!actionLoading}
+            >
+              {actionLoading === 'deprecate' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+              Deprecate
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1.5"
+              onClick={handleActivate}
+              disabled={!!actionLoading}
+            >
+              {actionLoading === 'activate' ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+              Activate
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5" disabled>
             <History className="w-3 h-3" /> Edit History
           </Button>
-          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5">
+          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5" disabled>
             <Copy className="w-3 h-3" /> Clone Rule
           </Button>
         </div>
@@ -173,28 +196,41 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ label, value, valueClass, children }: { label: string; value?: string; valueClass?: string; children?: React.ReactNode }) {
+function Row({
+  label,
+  value,
+  valueClass,
+  children,
+}: {
+  label: string;
+  value?: string;
+  valueClass?: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex justify-between items-start gap-2 text-[11px]">
+    <div className="flex justify-between items-start gap-3 text-[11px]">
       <span className="text-muted-foreground flex-shrink-0">{label}</span>
       {children || <span className={valueClass || 'text-foreground font-medium text-right'}>{value}</span>}
     </div>
   );
 }
 
-function MethodRadio({ label, icon, selected }: { label: string; icon: React.ReactNode; selected: boolean }) {
+function Stack({ label, value }: { label: string; value: string }) {
   return (
-    <div className={cn(
-      'flex items-center gap-2 text-[11px] px-2 py-1 rounded',
-      selected ? 'bg-primary/5 text-foreground font-medium' : 'text-muted-foreground'
-    )}>
-      <span className={cn('w-3 h-3 rounded-full border-2 flex items-center justify-center',
-        selected ? 'border-primary' : 'border-muted-foreground/40'
-      )}>
-        {selected && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
-      </span>
-      <span className="flex items-center gap-1">{icon}</span>
-      <span>{label}</span>
+    <div className="space-y-1">
+      <div className="text-[10px] text-muted-foreground">{label}</div>
+      <p className="text-[11px] text-foreground leading-relaxed">{value}</p>
+    </div>
+  );
+}
+
+function JsonBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] text-muted-foreground">{label}</div>
+      <pre className="text-[10px] text-foreground bg-muted/50 rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words">
+        {value}
+      </pre>
     </div>
   );
 }

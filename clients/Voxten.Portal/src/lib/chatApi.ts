@@ -2,10 +2,17 @@ import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
 export type ComplianceVerdict = "passed" | "flagged" | "redacted" | "blocked";
 
+export interface FiredRule {
+  ruleId: string;
+  ruleName: string;
+  action: string;
+  severity: string;
+}
+
 export class ComplianceBlockedError extends Error {
   constructor(
     public readonly auditId: string,
-    public readonly rulesFired: string[],
+    public readonly rulesFired: FiredRule[],
     public readonly complianceState: string,
   ) {
     super(`Message blocked by compliance policy. Audit: ${auditId}`);
@@ -97,7 +104,7 @@ async function readJsonOrError<T>(response: Response): Promise<T> {
     const body = await response.json().catch(() => ({})) as {
       auditId?: string;
       complianceState?: string;
-      rulesFired?: string[];
+      rulesFired?: FiredRule[];
     };
     throw new ComplianceBlockedError(
       body.auditId ?? "unknown",

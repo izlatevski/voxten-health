@@ -6,7 +6,7 @@ public class ComplianceCacheInvalidator(IHttpClientFactory httpClientFactory, IC
 {
     public async Task InvalidateAsync(CancellationToken ct = default)
     {
-        var baseUrl = config["ComplianceApi:BaseUrl"];
+        var baseUrl = config["ComplianceApi:BaseUrl"]?.TrimEnd('/');
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             logger.LogWarning("ComplianceApi:BaseUrl not configured — skipping cache invalidation");

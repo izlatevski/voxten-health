@@ -89,6 +89,7 @@ public class RulesController(ComplianceDbContext db, ComplianceCacheInvalidator 
 
         db.Rules.Add(rule);
         await db.SaveChangesAsync(ct);
+        await cacheInvalidator.InvalidateAsync(ct);
 
         return CreatedAtAction(nameof(Get), new { id = rule.Id }, ToResponse(rule));
     }
@@ -118,6 +119,7 @@ public class RulesController(ComplianceDbContext db, ComplianceCacheInvalidator 
         rule.ChangelogJson = request.ChangelogJson;
 
         await db.SaveChangesAsync(ct);
+        await cacheInvalidator.InvalidateAsync(ct);
         return Ok(ToResponse(rule));
     }
 

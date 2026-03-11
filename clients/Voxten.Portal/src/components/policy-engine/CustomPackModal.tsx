@@ -1,124 +1,137 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { createPack } from '@/lib/complianceApi';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  onCreated?: () => void | Promise<void>;
 }
 
-export function CustomPackModal({ open, onClose }: Props) {
+function toPackId(name: string): string {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .slice(0, 50) || 'custom-pack'
+  );
+}
+
+export function CustomPackModal({ open, onClose, onCreated }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [template, setTemplate] = useState('scratch');
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [generatedRules, setGeneratedRules] = useState<string[] | null>(null);
+  const [sector, setSector] = useState('Healthcare');
+  const [retentionDays, setRetentionDays] = useState('365');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleGenerate = () => {
-    setGenerating(true);
-    setTimeout(() => {
-      setGeneratedRules([
-        'Internal Communication Data Classification — Flag messages containing data classified above "Internal" when sent to external recipients',
-        'Executive Communication Archival — Log and archive all C-suite communications with enhanced retention (10yr)',
-        'Merger/Acquisition Information Control — Block communications containing M&A keywords to non-approved parties',
-        'Employee PII in Bulk Reports — Detect HR reports containing >10 employee SSNs or salary data',
-      ]);
-      setGenerating(false);
-    }, 2000);
-  };
+  const packId = useMemo(() => toPackId(name), [name]);
+
+  async function handleCreate() {
+    if (!name.trim()) {
+      setError('Pack name is required.');
+      return;
+    }
+
+    const retention = Number.parseInt(retentionDays, 10);
+    if (!Number.isFinite(retention) || retention <= 0) {
+      setError('Retention days must be a positive number.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      await createPack({
+        id: packId,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        sector,
+        retentionDays: retention,
+      });
+      await onCreated?.();
+      setName('');
+      setDescription('');
+      setSector('Healthcare');
+      setRetentionDays('365');
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create pack');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-base">Create Custom Regulation Pack</DialogTitle>
+          <DialogTitle className="text-base">Create Rule Pack</DialogTitle>
           <p className="text-xs text-muted-foreground mt-1">
-            Build a compliance pack from your organization's internal policies, guidelines, or regulatory requirements.
+            Create a pack that matches the backend `RulePack` contract.
           </p>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground font-medium">Pack Name</label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. CommonSpirit Internal Policy" className="h-8 text-xs" />
-          </div>
+          <Field label="Pack Name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. HIPAA Messaging Baseline" className="h-8 text-xs" />
+          </Field>
 
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground font-medium">Description</label>
-            <Textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the policies this pack will enforce..." className="text-xs min-h-[50px] resize-none" />
-          </div>
+          <Field label="Pack ID Preview">
+            <Input value={packId} readOnly className="h-8 text-xs font-mono bg-muted/30" />
+          </Field>
 
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground font-medium">Base Template</label>
-            <Select value={template} onValueChange={setTemplate}>
+          <Field label="Description">
+            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe the pack and the policy set it represents..." className="text-xs min-h-[60px] resize-none" />
+          </Field>
+
+          <Field label="Sector">
+            <Select value={sector} onValueChange={setSector}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="scratch" className="text-xs">Start from scratch</SelectItem>
-                <SelectItem value="clone-hipaa" className="text-xs">Clone existing pack (HIPAA)</SelectItem>
-                <SelectItem value="clone-finra" className="text-xs">Clone existing pack (FINRA)</SelectItem>
-                <SelectItem value="import" className="text-xs">Import from JSON/YAML</SelectItem>
-                <SelectItem value="ai" className="text-xs">AI-Assisted: Describe your policy</SelectItem>
+                <SelectItem value="Healthcare" className="text-xs">Healthcare</SelectItem>
+                <SelectItem value="Finance" className="text-xs">Finance</SelectItem>
+                <SelectItem value="Government" className="text-xs">Government</SelectItem>
+                <SelectItem value="Technology" className="text-xs">Technology</SelectItem>
+                <SelectItem value="Legal" className="text-xs">Legal</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </Field>
 
-          {template === 'ai' && (
-            <div className="space-y-2 bg-primary/5 rounded-md p-3 border border-primary/15">
-              <div className="flex items-center gap-1.5 text-xs text-primary font-medium">
-                <Sparkles className="w-3.5 h-3.5" /> AI-Assisted Rule Generation
-              </div>
-              <Textarea
-                value={aiPrompt}
-                onChange={e => setAiPrompt(e.target.value)}
-                placeholder="Describe your compliance requirement in plain English and VOXTEN will generate draft policy rules..."
-                className="text-xs min-h-[60px] resize-none"
-              />
-              <Button
-                size="sm"
-                className="h-7 text-xs gap-1.5"
-                onClick={handleGenerate}
-                disabled={!aiPrompt.trim() || generating}
-              >
-                {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                {generating ? 'Generating...' : 'Generate Draft Rules'}
-              </Button>
-              {generatedRules && (
-                <div className="space-y-1 mt-2">
-                  <p className="text-[10px] text-muted-foreground font-medium">Generated {generatedRules.length} draft rules:</p>
-                  {generatedRules.map((r, i) => (
-                    <div key={i} className="text-[11px] text-foreground bg-card rounded p-2 border border-border/50">
-                      {i + 1}. {r}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <Field label="Retention Days">
+            <Input value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} inputMode="numeric" className="h-8 text-xs" />
+          </Field>
 
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground font-medium">Applicable Channels</label>
-            <div className="flex flex-wrap gap-3">
-              {['Secure Messaging', 'SMS', 'Email', 'Voice', 'AI-Generated'].map(ch => (
-                <label key={ch} className="flex items-center gap-1.5 text-[11px]">
-                  <Checkbox defaultChecked className="w-3.5 h-3.5" />
-                  {ch}
-                </label>
-              ))}
-            </div>
-          </div>
+          {error ? <p className="text-[11px] text-stat">{error}</p> : null}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onClose}>Cancel</Button>
-            <Button size="sm" className="h-8 text-xs" onClick={onClose}>Create Pack →</Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" className="h-8 text-xs gap-1.5" onClick={handleCreate} disabled={saving}>
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Create Pack
+            </Button>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[11px] text-muted-foreground font-medium">{label}</label>
+      {children}
+    </div>
   );
 }

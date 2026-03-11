@@ -33,7 +33,9 @@ public class PatternDetectionService(ILogger<PatternDetectionService> logger)
 
         try
         {
-            var patternDefs = JsonSerializer.Deserialize<List<PatternDefinition>>(library.PatternsJson)
+            var patternDefs = JsonSerializer.Deserialize<List<PatternDefinition>>(
+                                 library.PatternsJson,
+                                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                               ?? [];
 
             foreach (var def in patternDefs)

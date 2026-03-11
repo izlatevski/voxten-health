@@ -16,7 +16,9 @@ AddAuthentication(builder);
 AddDatabase(builder);
 AddBlobStorage(builder);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 
 // Rule cache is a singleton — shared across all requests
@@ -121,7 +123,12 @@ static void AddBlobStorage(WebApplicationBuilder builder)
     if (string.IsNullOrWhiteSpace(connectionString))
         throw new InvalidOperationException("BlobStorage connection string is required.");
 
-    builder.Services.AddSingleton(new BlobServiceClient(connectionString));
+    // Azurite (dev) lags behind the SDK's default API version.
+    // Pin to V2024_08_04 in development; production uses the SDK default.
+    var blobOptions = builder.Environment.IsDevelopment()
+        ? new BlobClientOptions(BlobClientOptions.ServiceVersion.V2024_08_04)
+        : new BlobClientOptions();
+    builder.Services.AddSingleton(new BlobServiceClient(connectionString, blobOptions));
     builder.Services.AddSingleton<BlobMessageContentStore>();
     builder.Services.AddSingleton<IMessageContentStore>(sp =>
         sp.GetRequiredService<BlobMessageContentStore>());

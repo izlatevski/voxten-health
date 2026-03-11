@@ -433,7 +433,7 @@ public sealed class CommunicationsController(
                 SenderRole = senderParticipant?.Role,
                 ThreadId = request.ThreadId,
                 Channel = "SecureChat",
-                Direction = "Inbound"
+                Direction = "Internal"
             }, ct);
             complianceSw.Stop();
             complianceMs = complianceSw.ElapsedMilliseconds;
@@ -449,7 +449,7 @@ public sealed class CommunicationsController(
                     request.ThreadId,
                     senderEntraUserId,
                     complianceResult!.AuditId,
-                    string.Join(", ", complianceResult.RulesFired),
+                    string.Join(", ", complianceResult.RulesFired.Select(r => r.RuleId)),
                     totalSw.ElapsedMilliseconds);
 
                 return StatusCode(StatusCodes.Status422UnprocessableEntity, new

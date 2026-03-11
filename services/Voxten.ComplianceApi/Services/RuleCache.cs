@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using Voxten.Compliance.Data;
 using Voxten.Compliance.Data.Enums;
 using Voxten.Compliance.Data.Models.Rules;
@@ -64,8 +65,7 @@ public class CacheSnapshot
 
     public IEnumerable<Rule> GetApplicableRules(Channel channel, Direction direction, string? senderRole)
     {
-        // TODO: parse ScopeJson and filter by channel/direction/senderRole in Phase 2
-        return Rules;
+        return Rules.Where(rule => ScopeMatches(rule.ScopeJson, channel, direction, senderRole));
     }
 
     // Returns the highest retention requirement across all packs that own the fired rules.
@@ -82,4 +82,58 @@ public class CacheSnapshot
     }
 
     public Dictionary<string, int> PackRetentionDays { get; init; } = [];
+
+    private static bool ScopeMatches(string scopeJson, Channel channel, Direction direction, string? senderRole)
+    {
+        if (string.IsNullOrWhiteSpace(scopeJson) || scopeJson == "{}")
+            return true;
+
+        try
+        {
+            var scope = JsonSerializer.Deserialize<RuleScope>(
+                scopeJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (scope is null)
+                return true;
+
+            return MatchesEnum(scope.Channels, channel)
+                && MatchesEnum(scope.Directions, direction)
+                && MatchesSenderRole(scope.SenderRoles, senderRole);
+        }
+        catch (JsonException)
+        {
+            // Fail open for malformed scope JSON so compliance rules are not silently bypassed.
+            return true;
+        }
+    }
+
+    private static bool MatchesEnum<TEnum>(IReadOnlyList<string>? values, TEnum actual)
+        where TEnum : struct, Enum
+    {
+        if (values is null || values.Count == 0)
+            return true;
+
+        return values.Any(value =>
+            Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed)
+            && EqualityComparer<TEnum>.Default.Equals(parsed, actual));
+    }
+
+    private static bool MatchesSenderRole(IReadOnlyList<string>? senderRoles, string? senderRole)
+    {
+        if (senderRoles is null || senderRoles.Count == 0)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(senderRole))
+            return false;
+
+        return senderRoles.Any(role => string.Equals(role, senderRole, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed class RuleScope
+    {
+        public List<string>? Channels { get; set; }
+        public List<string>? Directions { get; set; }
+        public List<string>? SenderRoles { get; set; }
+    }
 }

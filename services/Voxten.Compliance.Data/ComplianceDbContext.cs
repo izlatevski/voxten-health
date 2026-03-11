@@ -40,7 +40,7 @@ public class ComplianceDbContext(DbContextOptions<ComplianceDbContext> options) 
             e.HasIndex(msg => msg.SourceChannel);
             e.HasIndex(msg => msg.IngestedAt);
             e.HasIndex(msg => msg.RetainUntil);
-            e.HasIndex(msg => msg.IngestHash).IsUnique();
+            e.HasIndex(msg => msg.IngestHash);
             e.HasMany(msg => msg.EvaluationResults)
                 .WithOne(er => er.Message)
                 .HasForeignKey(er => er.MessageId)
@@ -72,6 +72,7 @@ public class ComplianceDbContext(DbContextOptions<ComplianceDbContext> options) 
         m.Entity<MessageAuditRecord>(e =>
         {
             e.HasIndex(ar => ar.OverallVerdict);
+            e.HasIndex(ar => ar.ComplianceState);
             e.HasIndex(ar => ar.CreatedAt);
             e.HasIndex(ar => ar.RetainUntil);
             e.HasIndex(ar => ar.IsDisclosure);

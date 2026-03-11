@@ -50,17 +50,6 @@ export function ComposeArea({
           <span className="text-[10px] text-muted-foreground">AES-256 E2E</span>
         </div>
       </div>
-
-      {status === "warning" && (
-        <div className="mb-2 px-3 py-1.5 rounded bg-urgent/10 border border-urgent/20 text-[11px] text-urgent">
-          ⚠ Potential PHI detected. This message will be flagged by HIPAA-PHI-SMS-001 if sent via SMS.
-        </div>
-      )}
-      {status === "violation" && (
-        <div className="mb-2 px-3 py-1.5 rounded bg-stat/10 border border-stat/20 text-[11px] text-stat">
-          ✖ 42 CFR Part 2 data detected. HIPAA-PART2-008 requires consent verification before sharing.
-        </div>
-      )}
       {lastOutcome && (
         <div
           className={cn(

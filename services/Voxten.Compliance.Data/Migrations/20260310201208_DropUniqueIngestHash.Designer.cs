@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Voxten.Compliance.Data;
 
@@ -11,9 +12,11 @@ using Voxten.Compliance.Data;
 namespace Voxten.Compliance.Data.Migrations
 {
     [DbContext(typeof(ComplianceDbContext))]
-    partial class ComplianceDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260310201208_DropUniqueIngestHash")]
+    partial class DropUniqueIngestHash
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -82,7 +85,8 @@ namespace Voxten.Compliance.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("IngestHash");
+                    b.HasIndex("IngestHash")
+                        .IsUnique();
 
                     b.HasIndex("IngestedAt");
 

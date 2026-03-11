@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { usePolicyEngineStore, policyRules, sampleTestMessages } from '@/stores/policyEngineStore';
+import { usePolicyEngineStore, sampleTestMessages } from '@/stores/policyEngineStore';
+import type { PolicyRuleView } from '@/lib/policyEngine';
 import { Play, Loader2, ShieldAlert, ShieldCheck, ChevronDown, ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -35,9 +36,13 @@ interface EvalStep {
   done: boolean;
 }
 
-export function RuleTester() {
+interface Props {
+  rules: PolicyRuleView[];
+}
+
+export function RuleTester({ rules }: Props) {
   const { selectedRuleId, setDetailMode } = usePolicyEngineStore();
-  const rule = selectedRuleId ? policyRules.find(r => r.id === selectedRuleId) : null;
+  const rule = selectedRuleId ? rules.find((item) => String(item.id) === selectedRuleId) : null;
 
   const [channel, setChannel] = useState('SMS');
   const [direction, setDirection] = useState('Outbound');
@@ -83,7 +88,8 @@ export function RuleTester() {
     setTesting(true);
     setResult(null);
 
-    const totalRules = rule ? 1 : policyRules.filter(r => r.enabled).length;
+    const activeRules = rules.filter((item) => item.isActive);
+    const totalRules = rule ? 1 : activeRules.length;
     const packName = rule ? rule.packId.toUpperCase() : 'ALL';
 
     const evalSteps: EvalStep[] = [
@@ -123,7 +129,7 @@ export function RuleTester() {
     if (/allerg/i.test(input)) entities.push({ text: 'Allergies: Penicillin, Sulfa', type: 'Clinical Data (PHI)', method: 'AI Context', confidence: 0.86 });
 
     const shouldFire = entities.length > 0;
-    const matchedRule = rule || (shouldFire ? policyRules.find(r => r.enabled && r.severity === 'critical') : null);
+      const matchedRule = rule || (shouldFire ? activeRules.find((item) => item.severity === 'critical') ?? activeRules[0] ?? null : null);
     const patternMatches = entities.filter(e => e.method.includes('Pattern')).length;
 
     // Animate steps
@@ -166,14 +172,14 @@ export function RuleTester() {
         setResult({
           fired: true,
           verdict: matchedRule.action.toUpperCase() === 'REDACT' ? 'REDACTED' : matchedRule.action.toUpperCase() === 'FLAG' ? 'FLAGGED' : 'BLOCKED',
-          ruleId: matchedRule.id,
+          ruleId: String(matchedRule.id),
           ruleName: matchedRule.name,
           action: matchedRule.action,
           entities,
           reasoning,
           productionSteps: [
             `✕ Message ${matchedRule.action.toUpperCase()}ED — never reaches recipient`,
-            `🔔 Alert sent to ${matchedRule.notification}`,
+            `🔔 Default action set to ${matchedRule.defaultActions[0]?.actionType ?? matchedRule.action}`,
             `📋 Audit event VOX-2026-${String(Math.floor(Math.random() * 9000) + 1000)} logged to Event Hubs`,
             `🔒 Message content archived to WORM storage (HIPAA retention)`,
             `📊 Sentinel alert exported to customer SIEM`,

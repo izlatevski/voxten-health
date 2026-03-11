@@ -311,7 +311,7 @@ export default function Messages() {
           id: `blocked-${Date.now()}`,
           sender: currentUser?.displayName || 'Authenticated User',
           role: (currentUser?.roles?.[0] || currentUser?.jobTitle || 'User').replace(/^Voxten\./, ''),
-          content: `⛔ Message blocked by compliance policy. Rules: ${error.rulesFired.join(', ') || 'policy'}`,
+          content: `⛔ Message blocked by compliance policy. Rules: ${error.rulesFired.map(r => r.ruleName || r.ruleId).join(', ') || 'policy'}`,
           sortTs: Date.now(),
           timestamp,
           isAI: false,
@@ -324,7 +324,7 @@ export default function Messages() {
           },
         };
         appendLiveMessage(selectedThreadId, blocked);
-        setLastOutcome({ verdict: 'blocked', auditId: error.auditId, reason: error.rulesFired.join(', ') });
+        setLastOutcome({ verdict: 'blocked', auditId: error.auditId, reason: error.rulesFired.map(r => r.ruleName || r.ruleId).join(', ') });
         // Keep compose text so the user can edit and retry
         return;
       }

@@ -11,6 +11,7 @@ public class CacheController(RuleCache cache, ILogger<CacheController> logger) :
 {
     // Called by PortalApi after a rule, pack, or policy is created/updated/toggled.
     // Triggers a rule cache reload from the shared database.
+    [AllowAnonymous]
     [HttpPost("invalidate")]
     public async Task<IActionResult> Invalidate(CancellationToken ct)
     {

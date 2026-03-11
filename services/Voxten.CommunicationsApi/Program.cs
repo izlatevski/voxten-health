@@ -26,29 +26,30 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod();
     });
 });
+// Service-to-service credential for calling ComplianceApi
+builder.Services.AddSingleton<TokenCredential>(sp =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var tenantId = cfg["Authentication:TenantId"]!;
+    var clientId = cfg["Authentication:ClientId"]!;
+    var clientSecret = cfg["Authentication:Secret"];
+    return !string.IsNullOrWhiteSpace(clientSecret)
+        ? new ClientSecretCredential(tenantId, clientId, clientSecret)
+        : new DefaultAzureCredential();
+});
+builder.Services.AddTransient<ComplianceAuthHandler>();
+
 builder.Services.AddSingleton<AcsChatService>();
 builder.Services.AddSingleton<IAcsUserTokenCache, AcsUserTokenCache>();
 builder.Services.AddSingleton<CommunicationIndexRepository>();
 
 var complianceBaseUrl = builder.Configuration["ComplianceApi:BaseUrl"];
-if (!string.IsNullOrWhiteSpace(complianceBaseUrl))
+builder.Services.AddHttpClient<ComplianceClient>(client =>
 {
-    builder.Services.AddHttpClient<ComplianceClient>(client =>
-    {
-        client.BaseAddress = new Uri(complianceBaseUrl);
-        client.Timeout = TimeSpan.FromSeconds(10);
-    });
-}
-else
-{
-    // No ComplianceApi configured — register a no-op client so the controller
-    // can still be injected; it will fail-open on every call.
-    builder.Services.AddHttpClient<ComplianceClient>(client =>
-    {
-        client.BaseAddress = new Uri("http://localhost:5008");
-        client.Timeout = TimeSpan.FromSeconds(5);
-    });
-}
+    client.BaseAddress = new Uri(
+        !string.IsNullOrWhiteSpace(complianceBaseUrl) ? complianceBaseUrl : "http://localhost:5009");
+    client.Timeout = TimeSpan.FromSeconds(100);
+}).AddHttpMessageHandler<ComplianceAuthHandler>();
 
 var app = builder.Build();
 

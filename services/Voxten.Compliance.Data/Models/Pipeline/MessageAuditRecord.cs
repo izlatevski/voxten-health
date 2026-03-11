@@ -40,6 +40,10 @@ public class MessageAuditRecord
     [Required]
     public string RuleVersionsSnapshotJson { get; set; } = "{}";
 
+    // Frontend-facing compliance state: passed | flagged | redacted | blocked
+    [Required, MaxLength(20)]
+    public string ComplianceState { get; set; } = "passed";
+
     // Flags messages that constitute a regulated disclosure (meaning varies by industry/framework)
     public bool IsDisclosure { get; set; } = false;
 
