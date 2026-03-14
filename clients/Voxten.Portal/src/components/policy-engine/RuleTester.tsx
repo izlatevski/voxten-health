@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { evaluateCompliance, type EvaluateComplianceDetectedEntity, type EvaluateComplianceFiredRule, type EvaluateComplianceRequest, type EvaluateComplianceResponse } from '@/lib/complianceApi';
 import { usePolicyEngineStore, sampleTestMessages } from '@/stores/policyEngineStore';
 import type { PolicyRuleView } from '@/lib/policyEngine';
 import { Play, Loader2, ShieldAlert, ShieldCheck, ChevronDown, ArrowLeft } from 'lucide-react';
@@ -36,6 +37,156 @@ interface EvalStep {
   done: boolean;
 }
 
+const channelMap = {
+  'SMS': 'Sms',
+  'Email': 'Email',
+  'Secure Messaging': 'SecureChat',
+  'Voice': 'Voice',
+  'AI-Generated': 'SecureChat',
+} as const satisfies Record<string, EvaluateComplianceRequest['channel']>;
+
+const directionMap = {
+  'Outbound': 'Outbound',
+  'Inbound': 'Inbound',
+  'Internal': 'Internal',
+} as const satisfies Record<string, EvaluateComplianceRequest['direction']>;
+
+const senderRoleMap: Record<string, string> = {
+  'Dr. Rivera': 'Physician',
+  'Dr. Williams': 'Physician',
+  'Nurse Torres': 'Nurse',
+  'Charge Nurse': 'Nurse',
+  'Copilot M365': 'AiAgent',
+  'PharmD Kim': 'Pharmacist',
+  'Records Dept': 'HealthInformationManagement',
+  'Care Coordinator': 'CareCoordinator',
+  'Release of Information': 'HealthInformationManagement',
+};
+
+const entityExtractors: Record<string, RegExp> = {
+  SSN: /(?<!\d)\d{3}(?:[-\s]?\d{2}[-\s]?\d{4})(?!\d)/i,
+  MRN: /\bMRN[\-:\s#]*\d{4,12}\b/i,
+  DOB: /\b(?:DOB|date of birth|born)[:\s]+\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/i,
+  PatientID: /\b(?:patient|pt)[\s\-#:]*(?:ID|number)[\s:]*\d{4,12}\b/i,
+  InsuranceID: /\b(?:member\s*(?:ID|#)|policy\s*(?:number|#)|ins(?:urance)?\s*ID)[:\s]*[A-Z0-9][A-Z0-9\-]{5,19}\b/i,
+  PhoneNumber: /(?<!\d)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)/i,
+  Email: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/i,
+  RoomNumber: /\broom[\s#:-]*\d{1,4}[A-Z]?\b/i,
+  CredentialToken: /\b(?:DEA|NPI)[:\s#]*[A-Z0-9]{7,12}\b/i,
+  ControlledSubstance: /\b(?:controlled substance|schedule ii|schedule iii|opioid|benzodiazepine)\b/i,
+  HyperkalemiaLab: /\b(?:K\+|potassium)\s*(?:of\s*|=\s*|:)?\s*[6-9]\d*(?:\.\d+)?(?:\s*(?:mEq|mmol)(?:\/L)?)?\b/i,
+  TroponinElevated: /\b(?:troponin|trop)\s*(?:I|T)?\s*(?:of\s*|=\s*|:)?\s*(?:0\.(?:0[4-9]|\d{2,})|[1-9]\d*(?:\.\d+)?|elevated|positive|high)\b/i,
+  HyperglycemiaCrit: /\b(?:glucose|BG|blood sugar)\s*(?:of\s*|=\s*|:)?\s*(?:[4-9]\d{2,}|[1-9]\d{3,})\s*(?:mg\/dL)?\b/i,
+  EmergencyKeyword: /\bSTAT\b|\bcode\s+(?:blue|red|stroke|STEMI)\b/i,
+};
+
+function formatDetectionMethod(method: string): string {
+  switch (method.toLowerCase()) {
+    case 'deterministic':
+      return 'Pattern';
+    case 'hybrid':
+      return 'Pattern + AI';
+    case 'ai':
+      return 'AI';
+    default:
+      return method;
+  }
+}
+
+function formatEntityType(entityType: string): string {
+  switch (entityType) {
+    case 'MRN':
+      return 'Medical Record Number';
+    case 'DOB':
+      return 'Date of Birth';
+    case 'PhoneNumber':
+      return 'Phone Number';
+    case 'InsuranceID':
+      return 'Insurance ID';
+    case 'PatientID':
+      return 'Patient ID';
+    case 'HyperkalemiaLab':
+      return 'Critical Potassium';
+    case 'TroponinElevated':
+      return 'Elevated Troponin';
+    case 'HyperglycemiaCrit':
+      return 'Critical Glucose';
+    case 'EmergencyKeyword':
+      return 'Emergency Keyword';
+    default:
+      return entityType.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+}
+
+function extractEntityText(content: string, entityType: string): string {
+  const match = entityExtractors[entityType]?.exec(content);
+  return match?.[0] ?? entityType;
+}
+
+function mapEntities(content: string, entities: EvaluateComplianceDetectedEntity[]): DetectedEntity[] {
+  return entities.map((entity) => ({
+    text: extractEntityText(content, entity.entityType),
+    type: formatEntityType(entity.entityType),
+    method: formatDetectionMethod(entity.detectionMethod),
+    confidence: entity.confidence,
+  }));
+}
+
+function mapVerdict(state: string, rulesFired: EvaluateComplianceFiredRule[]): string {
+  switch (state) {
+    case 'blocked':
+      return 'BLOCKED';
+    case 'redacted':
+      return 'REDACTED';
+    case 'flagged':
+      return 'FLAGGED';
+    case 'passed':
+      return 'PASSED';
+    default:
+      return rulesFired.length > 0 ? 'FLAGGED' : 'PASSED';
+  }
+}
+
+function buildReasoning(response: EvaluateComplianceResponse, entities: DetectedEntity[]): string {
+  if (response.rulesFired.length === 0) {
+    return `Compliance engine returned no violations. ${entities.length === 0 ? 'No deterministic entities were surfaced for this message.' : `Detected entities were below enforcement thresholds: ${entities.map((entity) => entity.type).join(', ')}.`} Compliance state: ${response.complianceState.toUpperCase()}.`;
+  }
+
+  const ruleSummary = response.rulesFired
+    .map((rule) => `${rule.ruleId} (${rule.action})`)
+    .join(', ');
+  const entitySummary = entities.length > 0
+    ? entities.map((entity) => `${entity.type} "${entity.text}" (${(entity.confidence * 100).toFixed(0)}% confidence via ${entity.method})`).join('; ')
+    : 'No displayable entity snippets were returned.';
+
+  return `Compliance engine flagged this message with state ${response.complianceState.toUpperCase()}. Fired rules: ${ruleSummary}. Entities surfaced: ${entitySummary}. Audit ID: ${response.auditId}.`;
+}
+
+function buildProductionSteps(response: EvaluateComplianceResponse, channel: string, primaryRule: EvaluateComplianceFiredRule | null): string[] {
+  if (response.rulesFired.length === 0) {
+    return [];
+  }
+
+  const steps = [
+    `Compliance API returned ${response.complianceState.toUpperCase()} for outbound ${channel.toLowerCase()} traffic.`,
+    `Audit record ${response.auditId} was created with ${response.rulesFired.length} fired rule${response.rulesFired.length === 1 ? '' : 's'}.`,
+  ];
+
+  if (response.complianceState === 'blocked') {
+    steps.unshift('Message would be blocked before delivery.');
+  } else if (response.complianceState === 'redacted') {
+    steps.unshift('Message would be redacted before delivery.');
+  } else if (response.complianceState === 'flagged') {
+    steps.unshift('Message would be flagged for review.');
+  }
+
+  if (primaryRule) {
+    steps.push(`Primary enforcement rule: ${primaryRule.ruleId} (${primaryRule.ruleName}).`);
+  }
+
+  return steps;
+}
+
 interface Props {
   rules: PolicyRuleView[];
 }
@@ -53,6 +204,7 @@ export function RuleTester({ rules }: Props) {
   const [result, setResult] = useState<TestResult | null>(null);
   const [steps, setSteps] = useState<EvalStep[]>([]);
   const [showSamples, setShowSamples] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
   // Keyboard shortcuts for sample messages
@@ -83,132 +235,105 @@ export function RuleTester({ rules }: Props) {
     setShowSamples(false);
   };
 
-  const handleTest = useCallback(() => {
+  async function handleTest() {
     if (!input.trim() || testing) return;
+
     setTesting(true);
     setResult(null);
+    setError(null);
 
     const activeRules = rules.filter((item) => item.isActive);
-    const totalRules = rule ? 1 : activeRules.length;
+    const totalRules = activeRules.length;
     const packName = rule ? rule.packId.toUpperCase() : 'ALL';
 
-    const evalSteps: EvalStep[] = [
-      { label: 'Ingesting message...', done: false },
-      { label: `Evaluating against ${totalRules} active ${packName} rules...`, done: false },
-      { label: 'Running pattern match analysis...', detail: '', done: false },
-      { label: 'Running AI semantic analysis (Azure OpenAI GPT-4o)...', detail: '', done: false },
-      { label: 'Evaluating policy action...', detail: '', done: false },
-      { label: 'Generating audit record...', done: false },
-    ];
+    setSteps([
+      { label: 'Ingesting message...', detail: `→ Channel ${channel} · Direction ${direction}`, done: true },
+      { label: `Submitting to Compliance API (${packName})...`, done: false },
+      { label: 'Running deterministic / hybrid rule engine...', done: false },
+      { label: 'Collecting entity evidence...', done: false },
+      { label: 'Applying enforcement decision...', done: false },
+      { label: 'Creating audit record...', done: false },
+    ]);
 
-    setSteps([...evalSteps]);
+    try {
+      const response = await evaluateCompliance({
+        messageId: crypto.randomUUID(),
+        content: input,
+        senderId: sender,
+        senderRole: senderRoleMap[sender] ?? sender,
+        threadId: `rule-tester-${crypto.randomUUID()}`,
+        channel: channelMap[channel as keyof typeof channelMap] ?? 'SecureChat',
+        direction: directionMap[direction as keyof typeof directionMap] ?? 'Outbound',
+      });
 
-    // Simulate stepped evaluation
-    const delays = [100, 300, 600, 1400, 1600, 1700];
-    const lowerInput = input.toLowerCase();
+      const entities = mapEntities(input, response.entitiesDetected);
+      const primaryFiredRule = response.rulesFired[0] ?? null;
+      const primaryRuleView = primaryFiredRule
+        ? rules.find((item) => item.logicalId === primaryFiredRule.ruleId) ?? null
+        : null;
+      const action = primaryRuleView?.action
+        ?? (response.complianceState === 'redacted' ? 'redact'
+          : response.complianceState === 'blocked' ? 'block'
+          : response.complianceState === 'flagged' ? 'flag'
+          : 'log');
 
-    // Detect entities
-    const entities: DetectedEntity[] = [];
-    const nameMatch = input.match(/\b([A-Z][a-z]+ [A-Z][a-z]+)\b/);
-    if (nameMatch) entities.push({ text: nameMatch[1], type: 'Person', method: 'AI + Pattern', confidence: 0.97 });
-    const mrnMatch = input.match(/MRN[\s-]?(\d+)/i);
-    if (mrnMatch) entities.push({ text: `MRN ${mrnMatch[1]}`, type: 'Medical Record Number', method: 'Pattern', confidence: 1.00 });
-    const ssnMatch = input.match(/\b\d{3}-\d{2}-\d{4}\b/);
-    if (ssnMatch) entities.push({ text: ssnMatch[0], type: 'SSN', method: 'Pattern', confidence: 1.00 });
-    const dobMatch = input.match(/DOB:\s*(\d{2}\/\d{2}\/\d{4})/i);
-    if (dobMatch) entities.push({ text: dobMatch[1], type: 'Date of Birth', method: 'Pattern', confidence: 1.00 });
-    if (/potassium|k\+|cr\s*\d/i.test(input)) {
-      const labMatch = input.match(/(?:potassium|K\+|Cr)\s*(?:of\s*)?(\d+\.?\d*)/i);
-      entities.push({ text: labMatch ? `${labMatch[0]}` : 'Lab value', type: 'Lab Result (PHI)', method: 'AI Context', confidence: 0.89 });
-    }
-    const phoneMatch = input.match(/\b\d{3}-\d{4}\b/);
-    if (phoneMatch) entities.push({ text: phoneMatch[0], type: 'Phone Number', method: 'Pattern', confidence: 0.94 });
-    if (/whatsapp|signal|telegram|personal\s*email/i.test(input)) entities.push({ text: 'WhatsApp conversation', type: 'Off-Channel Reference', method: 'AI + Pattern', confidence: 0.95 });
-    if (/substance use|alcohol use|behavioral health/i.test(input)) entities.push({ text: 'substance use assessment', type: 'Behavioral Health Data', method: 'AI Semantic', confidence: 0.91 });
-    if (/patient roster|847 patients|\bMRNs\b.*diagnoses/i.test(input)) entities.push({ text: 'Q4 patient roster', type: 'Bulk Patient Data', method: 'Pattern', confidence: 0.98 });
-    if (/allerg/i.test(input)) entities.push({ text: 'Allergies: Penicillin, Sulfa', type: 'Clinical Data (PHI)', method: 'AI Context', confidence: 0.86 });
+      setSteps([
+        { label: 'Ingesting message...', detail: `→ Channel ${channel} · Direction ${direction}`, done: true },
+        { label: `Submitting to Compliance API (${packName})...`, detail: `→ Audit ${response.auditId}`, done: true },
+        {
+          label: 'Running deterministic / hybrid rule engine...',
+          detail: response.rulesFired.length > 0
+            ? `→ ${response.rulesFired.length} rule${response.rulesFired.length === 1 ? '' : 's'} fired: ${response.rulesFired.map((firedRule) => firedRule.ruleId).join(', ')}`
+            : '→ No rules fired',
+          done: true,
+        },
+        {
+          label: 'Collecting entity evidence...',
+          detail: entities.length > 0
+            ? `→ ${entities.length} entit${entities.length === 1 ? 'y' : 'ies'} surfaced: ${entities.map((entity) => entity.type).join(', ')}`
+            : '→ No entity evidence returned',
+          done: true,
+        },
+        {
+          label: 'Applying enforcement decision...',
+          detail: `→ Compliance state ${response.complianceState.toUpperCase()}`,
+          done: true,
+        },
+        {
+          label: 'Creating audit record...',
+          detail: `→ Engine latency ${response.evalMs}ms`,
+          done: true,
+        },
+      ]);
 
-    const shouldFire = entities.length > 0;
-      const matchedRule = rule || (shouldFire ? activeRules.find((item) => item.severity === 'critical') ?? activeRules[0] ?? null : null);
-    const patternMatches = entities.filter(e => e.method.includes('Pattern')).length;
+      setResult({
+        fired: response.rulesFired.length > 0,
+        verdict: mapVerdict(response.complianceState, response.rulesFired),
+        ruleId: primaryFiredRule?.ruleId ?? '',
+        ruleName: primaryFiredRule?.ruleName ?? '',
+        action,
+        entities,
+        reasoning: buildReasoning(response, entities),
+        productionSteps: buildProductionSteps(response, channel, primaryFiredRule),
+        evalTimeMs: response.evalMs,
+        tokenCost: response.aiMs ? 'AI lane used' : 'Pattern lane only',
+        totalRulesEvaluated: totalRules,
+      });
 
-    // Animate steps
-    delays.forEach((delay, i) => {
-      setTimeout(() => {
-        setSteps(prev => {
-          const updated = [...prev];
-          updated[i] = { ...updated[i], done: true };
-          // Add details to pattern match step
-          if (i === 2 && patternMatches > 0) {
-            updated[i].detail = `→ ${patternMatches} pattern${patternMatches > 1 ? 's' : ''} matched: ${entities.filter(e => e.method.includes('Pattern')).map(e => e.type).join(', ')}`;
-          } else if (i === 2 && !shouldFire) {
-            updated[i].detail = '→ No patterns matched';
-          }
-          if (i === 3 && shouldFire) {
-            const aiEntities = entities.filter(e => e.method.includes('AI'));
-            updated[i].detail = aiEntities.length > 0
-              ? `→ Confirmed: ${aiEntities.length > 0 ? aiEntities[0].type : 'content'} detected with ${(Math.max(...entities.map(e => e.confidence))).toFixed(2)} confidence`
-              : '→ AI analysis confirmed pattern match results';
-          } else if (i === 3 && !shouldFire) {
-            updated[i].detail = '→ No policy-relevant content detected';
-          }
-          if (i === 4) {
-            updated[i].detail = shouldFire && matchedRule
-              ? `→ Rule ${matchedRule.id}: ${matchedRule.action.toUpperCase()}`
-              : '→ All rules: PASS';
-          }
-          return updated;
-        });
-      }, delay);
-    });
-
-    // Final result
-    setTimeout(() => {
-      const evalTime = shouldFire ? 12 : 8;
-
-      if (shouldFire && matchedRule) {
-        const reasoning = `This message contains Protected Health Information as defined under HIPAA §164.502 (Minimum Necessary) and §164.514 (De-identification Standard). ${entities.length} categor${entities.length === 1 ? 'y' : 'ies'} of PHI identifiers detected: ${entities.map((e, i) => `(${i + 1}) ${e.type} "${e.text}" — ${e.method.includes('AI') ? 'confirmed by AI semantic analysis' : 'matched by pattern library'} (${(e.confidence * 100).toFixed(0)}% confidence)`).join('; ')}. ${entities.length > 1 ? 'The combination of these elements constitutes individually identifiable health information.' : ''} ${entities.some(e => e.type === 'SSN') ? 'Recommended action: REDACT SSN before transmission.' : ''} ${entities.some(e => e.type === 'Phone Number') ? 'Recommended action: FLAG phone number for review.' : ''}`;
-
-        setResult({
-          fired: true,
-          verdict: matchedRule.action.toUpperCase() === 'REDACT' ? 'REDACTED' : matchedRule.action.toUpperCase() === 'FLAG' ? 'FLAGGED' : 'BLOCKED',
-          ruleId: String(matchedRule.id),
-          ruleName: matchedRule.name,
-          action: matchedRule.action,
-          entities,
-          reasoning,
-          productionSteps: [
-            `✕ Message ${matchedRule.action.toUpperCase()}ED — never reaches recipient`,
-            `🔔 Default action set to ${matchedRule.defaultActions[0]?.actionType ?? matchedRule.action}`,
-            `📋 Audit event VOX-2026-${String(Math.floor(Math.random() * 9000) + 1000)} logged to Event Hubs`,
-            `🔒 Message content archived to WORM storage (HIPAA retention)`,
-            `📊 Sentinel alert exported to customer SIEM`,
-            `👤 Sender notified: "Message ${matchedRule.action}ed — ${entities[0]?.type || 'violation'} detected in outbound ${channel.toLowerCase()}."`,
-          ],
-          evalTimeMs: evalTime,
-          tokenCost: '~0.002¢',
-          totalRulesEvaluated: totalRules,
-        });
-      } else {
-        setResult({
-          fired: false,
-          verdict: 'PASSED',
-          ruleId: '',
-          ruleName: '',
-          action: 'pass',
-          entities: [],
-          reasoning: `No PHI violations detected. This message uses de-identified references only. ${/room \d+|4N-\d+/i.test(input) ? 'Room/bed identifiers alone do not constitute individually identifiable health information under HIPAA §164.514. ' : ''}No names, MRNs, SSNs, dates of birth, or other HIPAA identifiers detected. ${/K\+|potassium|BMP|medication/i.test(input) ? 'Clinical content is present but not linked to an identifiable individual — safe under minimum necessary standard. ' : ''}0 entities flagged. CLEAR for transmission.`,
-          productionSteps: [],
-          evalTimeMs: evalTime,
-          tokenCost: '~0.002¢',
-          totalRulesEvaluated: totalRules,
-        });
-      }
-
-      setTesting(false);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, 1900);
-  }, [input, testing, rule, channel]);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : 'Unexpected compliance API error.';
+      setError(message);
+      setSteps((currentSteps) => currentSteps.map((step, index) => {
+        if (index === 1) {
+          return { ...step, done: true, detail: `→ Request failed: ${message}` };
+        }
+        return index < 1 ? step : { ...step, detail: '', done: false };
+      }));
+    } finally {
+      setTesting(false);
+    }
+  }
 
   // Highlight entities in text
   const renderHighlightedText = (text: string, entities: DetectedEntity[]) => {
@@ -288,6 +413,7 @@ export function RuleTester({ rules }: Props) {
               <SelectContent>
                 <SelectItem value="Outbound" className="text-[11px]">Outbound</SelectItem>
                 <SelectItem value="Inbound" className="text-[11px]">Inbound</SelectItem>
+                <SelectItem value="Internal" className="text-[11px]">Internal</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -346,11 +472,17 @@ export function RuleTester({ rules }: Props) {
           </div>
           <Textarea
             value={input}
-            onChange={(e) => { setInput(e.target.value); setResult(null); setSteps([]); }}
+            onChange={(e) => { setInput(e.target.value); setResult(null); setSteps([]); setError(null); }}
             placeholder='Type or paste a message here...'
             className="text-[11px] min-h-[80px] font-mono leading-relaxed"
           />
         </div>
+
+        {error && (
+          <div className="rounded-md border border-stat/20 bg-stat/5 px-3 py-2 text-[11px] text-stat">
+            {error}
+          </div>
+        )}
 
         {/* Run Test Button */}
         <Button
@@ -383,7 +515,7 @@ export function RuleTester({ rules }: Props) {
             ))}
             {result && (
               <div className="border-t border-border/50 pt-1 mt-1 text-muted-foreground">
-                Total evaluation time: 1.6s (Production avg: {result.evalTimeMs}ms)
+                Compliance API evaluation time: {result.evalTimeMs}ms
               </div>
             )}
           </div>
@@ -420,14 +552,14 @@ export function RuleTester({ rules }: Props) {
                   Rule: <span className="font-mono font-semibold">{result.ruleId}</span> — {result.ruleName}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Rules matched: HIPAA §164.502 (PHI Minimum Necessary), §164.514 (De-identification) · Evaluation time: {result.evalTimeMs}ms
+                  Compliance engine returned an enforced result · Evaluation time: {result.evalTimeMs}ms
                 </p>
               </div>
             )}
             {!result.fired && (
               <div className="space-y-1">
                 <p className="text-[11px] text-foreground">
-                  {result.totalRulesEvaluated} rules evaluated — 0 matches. No PHI violations detected.
+                  {result.totalRulesEvaluated} active rules in the current view. Engine returned no violations.
                 </p>
                 <p className="text-[11px] text-muted-foreground">0 entities flagged · Evaluation time: {result.evalTimeMs}ms</p>
               </div>
@@ -480,11 +612,11 @@ export function RuleTester({ rules }: Props) {
                   "{result.reasoning}"
                 </p>
                 <div className="flex items-center gap-3 mt-2 text-[9px] text-muted-foreground">
-                  <span>Model: Azure OpenAI (GPT-4o)</span>
+                  <span>Source: Compliance API</span>
                   <span>│</span>
                   <span>Confidence: {result.entities.length > 0 ? (Math.max(...result.entities.map(e => e.confidence))).toFixed(2) : '0.94'}</span>
                   <span>│</span>
-                  <span>Time: {result.evalTimeMs + 18}ms</span>
+                  <span>Time: {result.evalTimeMs}ms</span>
                   <span>│</span>
                   <span>Cost: {result.tokenCost}</span>
                 </div>
@@ -531,7 +663,9 @@ export function RuleTester({ rules }: Props) {
                   size="sm"
                   className="h-7 text-[11px]"
                   onClick={() => {
-                    usePolicyEngineStore.getState().setSelectedRule(result.ruleId);
+                    const firedRule = rules.find((item) => item.logicalId === result.ruleId);
+                    if (!firedRule) return;
+                    usePolicyEngineStore.getState().setSelectedRule(String(firedRule.id));
                     setDetailMode('rule-detail');
                   }}
                 >

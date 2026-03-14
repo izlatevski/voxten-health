@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { activateRule, deprecateRule } from '@/lib/complianceApi';
 import { formatDateTime, formatList, type PolicyRuleView } from '@/lib/policyEngine';
 import { usePolicyEngineStore } from '@/stores/policyEngineStore';
-import { CheckCircle, Copy, Edit, History, Loader2, Pause, Play } from 'lucide-react';
+import { CheckCircle, Copy, Edit, History, Loader2, Pause } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const severityDisplay: Record<string, { text: string; className: string }> = {
@@ -145,13 +145,6 @@ export function RuleDetailView({ rules, onRuleChanged }: Props) {
         {actionError ? <p className="text-[11px] text-stat">{actionError}</p> : null}
 
         <div className="border-t border-border pt-3 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            className="h-7 text-[11px] gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() => setDetailMode('rule-tester')}
-          >
-            <Play className="w-3 h-3" /> Test This Rule
-          </Button>
           {rule.isActive ? (
             <Button
               variant="outline"

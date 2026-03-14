@@ -3,11 +3,22 @@ import { create } from 'zustand';
 export type RuleSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type RuleAction = 'block' | 'flag' | 'redact' | 'log' | 'escalate';
 export type AnalysisMethod = 'pattern' | 'ai' | 'both';
-export type DetailPanelMode = 'pack-overview' | 'rule-detail' | 'rule-tester' | 'rule-create' | 'rule-edit';
+export type PolicyWorkspaceMode = 'rules' | 'patterns';
+export type DetailPanelMode =
+  | 'pack-overview'
+  | 'rule-detail'
+  | 'rule-create'
+  | 'rule-edit'
+  | 'pattern-library-overview'
+  | 'pattern-library-detail'
+  | 'pattern-library-create'
+  | 'pattern-library-edit';
 
 interface PolicyEngineState {
+  workspaceMode: PolicyWorkspaceMode;
   selectedPackId: string | null;
   selectedRuleId: string | null;
+  selectedPatternLibraryId: string | null;
   detailMode: DetailPanelMode;
   searchQuery: string;
   severityFilter: RuleSeverity | 'all';
@@ -15,8 +26,10 @@ interface PolicyEngineState {
   methodFilter: AnalysisMethod | 'all';
   channelFilter: string;
   packsCollapsed: boolean;
+  setWorkspaceMode: (mode: PolicyWorkspaceMode) => void;
   setSelectedPack: (id: string | null) => void;
   setSelectedRule: (id: string | null) => void;
+  setSelectedPatternLibrary: (id: string | null) => void;
   setDetailMode: (mode: DetailPanelMode) => void;
   setSearchQuery: (q: string) => void;
   setSeverityFilter: (f: RuleSeverity | 'all') => void;
@@ -27,8 +40,10 @@ interface PolicyEngineState {
 }
 
 export const usePolicyEngineStore = create<PolicyEngineState>((set) => ({
+  workspaceMode: 'rules',
   selectedPackId: null,
   selectedRuleId: null,
+  selectedPatternLibraryId: null,
   detailMode: 'pack-overview',
   searchQuery: '',
   severityFilter: 'all',
@@ -36,8 +51,28 @@ export const usePolicyEngineStore = create<PolicyEngineState>((set) => ({
   methodFilter: 'all',
   channelFilter: 'all',
   packsCollapsed: false,
-  setSelectedPack: (id) => set({ selectedPackId: id, selectedRuleId: null, detailMode: 'pack-overview' }),
-  setSelectedRule: (id) => set({ selectedRuleId: id, detailMode: id ? 'rule-detail' : 'pack-overview' }),
+  setWorkspaceMode: (mode) => set((state) => ({
+    workspaceMode: mode,
+    detailMode: mode === 'rules'
+      ? (state.selectedRuleId ? 'rule-detail' : 'pack-overview')
+      : (state.selectedPatternLibraryId ? 'pattern-library-detail' : 'pattern-library-overview'),
+  })),
+  setSelectedPack: (id) => set({
+    workspaceMode: 'rules',
+    selectedPackId: id,
+    selectedRuleId: null,
+    detailMode: 'pack-overview',
+  }),
+  setSelectedRule: (id) => set({
+    workspaceMode: 'rules',
+    selectedRuleId: id,
+    detailMode: id ? 'rule-detail' : 'pack-overview',
+  }),
+  setSelectedPatternLibrary: (id) => set({
+    workspaceMode: 'patterns',
+    selectedPatternLibraryId: id,
+    detailMode: id ? 'pattern-library-detail' : 'pattern-library-overview',
+  }),
   setDetailMode: (mode) => set({ detailMode: mode }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setSeverityFilter: (f) => set({ severityFilter: f }),

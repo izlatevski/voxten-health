@@ -1,47 +1,110 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { TrendingUp, TrendingDown, ShieldCheck, BarChart3, AlertTriangle, Zap, CheckCircle, Bot, ArrowRight } from 'lucide-react';
+import {
+  TrendingUp,
+  TrendingDown,
+  ShieldCheck,
+  BarChart3,
+  AlertTriangle,
+  Zap,
+  CheckCircle,
+  Loader2,
+} from 'lucide-react';
 import { PolicyEngineStatus } from './PolicyEngineStatus';
 import { ViolationHeatmap } from './ViolationHeatmap';
 import { useNavigate } from 'react-router-dom';
+import { getComplianceStats, queryAuditRecords, type AuditSummary } from '@/lib/complianceApi';
 
-/* ── Compliance KPIs ── */
-const complianceMetrics = [
-  { title: 'Communications Governed (24h)', value: 51138, trend: '+3,291 vs yesterday', trendGood: true, icon: ShieldCheck },
-  { title: 'Policy Coverage', value: '100%', trend: 'All channels monitored', trendGood: true, icon: BarChart3 },
-  { title: 'Violations Detected', value: 23, trend: '-4 vs yesterday', trendGood: true, icon: AlertTriangle },
-  { title: 'Violation Resolution Rate', value: '100%', trend: '23/23 resolved', trendGood: true, icon: CheckCircle },
-  { title: 'Governance Latency', value: '<47ms', trend: 'No operational impact', trendGood: true, icon: Zap },
-];
+type SeverityLevel = 'Critical' | 'High' | 'Medium' | 'Low';
 
-/* ── Risk Matrix ── */
-const riskMatrix = [
-  { severity: 'Critical', low: 0, med: 0, high: 0 },
-  { severity: 'High', low: 2, med: 1, high: 0 },
-  { severity: 'Medium', low: 4, med: 8, high: 3 },
-  { severity: 'Low', low: 1, med: 3, high: 1 },
-];
+type RiskRow = {
+  severity: SeverityLevel;
+  low: number;
+  med: number;
+  high: number;
+};
 
-function cellColor(val: number, severity: string): string {
+function cellColor(val: number, severity: SeverityLevel): string {
   if (val === 0) return 'bg-success/15 text-success';
   if (severity === 'Critical') return 'bg-stat/20 text-stat';
   if (severity === 'High') return 'bg-urgent/20 text-urgent';
   return 'bg-urgent/10 text-urgent';
 }
 
-/* ── Violations Feed ── */
-const recentViolations = [
-  { time: '14:23', verdict: 'FLAG', channel: 'Secure Msg', reg: 'HIPAA', who: 'Dr. Williams → Care Team', reason: 'SUD data shared without 42 CFR Part 2 consent verification' },
-  { time: '11:47', verdict: 'BLOCK', channel: 'SMS', reg: 'HIPAA', who: 'Auto-blocked', reason: 'PII pattern detected in outbound SMS' },
-  { time: '11:02', verdict: 'FLAG', channel: 'AI-Gen', reg: 'HIPAA', who: 'Copilot → Dr. Chen', reason: 'PHI in AI-generated patient summary' },
-  { time: '09:15', verdict: 'REDACT', channel: 'Email', reg: 'HIPAA', who: 'System', reason: 'PHI redacted — minimum necessary violation in referral letter' },
-  { time: '08:44', verdict: 'FLAG', channel: 'Secure Msg', reg: 'HIPAA', who: 'Nurse Torres', reason: 'Patient name in unsecured channel attempt' },
-  { time: '07:30', verdict: 'BLOCK', channel: 'SMS', reg: 'HIPAA', who: 'Auto-blocked', reason: 'SSN pattern detected in SMS draft' },
-];
+function startOfDaysAgo(days: number): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+}
 
-const verdictStyle: Record<string, string> = {
+function mapChannel(channel?: string): string {
+  switch (channel) {
+    case 'SecureChat':
+      return 'Secure Msg';
+    case 'Sms':
+      return 'SMS';
+    case 'Email':
+      return 'Email';
+    case 'Voice':
+      return 'Voice';
+    case 'Ehr':
+      return 'EHR';
+    default:
+      return channel || 'Unknown';
+  }
+}
+
+function mapVerdict(state: string): 'FLAG' | 'BLOCK' | 'REDACT' {
+  switch (state) {
+    case 'blocked':
+      return 'BLOCK';
+    case 'redacted':
+      return 'REDACT';
+    default:
+      return 'FLAG';
+  }
+}
+
+function formatActor(audit: AuditSummary): string {
+  const source = audit.senderDisplayName || audit.senderId || audit.senderRole || 'System';
+  const target = audit.direction ? audit.direction.toLowerCase() : 'message';
+  return `${source} → ${target}`;
+}
+
+function formatReason(audit: AuditSummary): string {
+  const severity = audit.maxViolationSeverity || 'Unknown';
+  const violations = `${audit.violationCount} violation${audit.violationCount === 1 ? '' : 's'}`;
+  return `${severity} severity · ${violations} · ${audit.totalRulesEvaluated} rules evaluated`;
+}
+
+function toRiskMatrix(audits: AuditSummary[]): RiskRow[] {
+  const matrix: Record<SeverityLevel, RiskRow> = {
+    Critical: { severity: 'Critical', low: 0, med: 0, high: 0 },
+    High: { severity: 'High', low: 0, med: 0, high: 0 },
+    Medium: { severity: 'Medium', low: 0, med: 0, high: 0 },
+    Low: { severity: 'Low', low: 0, med: 0, high: 0 },
+  };
+
+  const grouped = new Map<SeverityLevel, number>();
+  for (const audit of audits) {
+    const severity = (audit.maxViolationSeverity as SeverityLevel | undefined) ?? 'Low';
+    grouped.set(severity, (grouped.get(severity) ?? 0) + 1);
+  }
+
+  grouped.forEach((count, severity) => {
+    if (count >= 10) matrix[severity].high = count;
+    else if (count >= 4) matrix[severity].med = count;
+    else matrix[severity].low = count;
+  });
+
+  return [matrix.Critical, matrix.High, matrix.Medium, matrix.Low];
+}
+
+const verdictStyle: Record<'FLAG' | 'BLOCK' | 'REDACT', string> = {
   FLAG: 'text-urgent bg-urgent/10',
   BLOCK: 'text-stat bg-stat/10',
   REDACT: 'text-ehr-part2 bg-ehr-part2/10',
@@ -50,135 +113,207 @@ const verdictStyle: Record<string, string> = {
 export function ComplianceDashboard() {
   const navigate = useNavigate();
 
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['dashboard-compliance-stats', 7],
+    queryFn: () => getComplianceStats(7),
+    staleTime: 60_000,
+  });
+
+  const { data: recentAuditPage, isLoading: recentAuditsLoading } = useQuery({
+    queryKey: ['dashboard-recent-audits'],
+    queryFn: () => queryAuditRecords({ from: startOfDaysAgo(1), page: 0, pageSize: 25 }),
+    staleTime: 30_000,
+  });
+
+  const { data: weeklyAuditPage, isLoading: weeklyAuditsLoading } = useQuery({
+    queryKey: ['dashboard-weekly-audits'],
+    queryFn: () => queryAuditRecords({ from: startOfDaysAgo(7), page: 0, pageSize: 100 }),
+    staleTime: 60_000,
+  });
+
+  const recentViolations = useMemo(
+    () => (recentAuditPage?.items ?? []).filter((item) => item.complianceState !== 'passed').slice(0, 8),
+    [recentAuditPage],
+  );
+
+  const weeklyViolations = useMemo(
+    () => (weeklyAuditPage?.items ?? []).filter((item) => item.complianceState !== 'passed'),
+    [weeklyAuditPage],
+  );
+
+  const riskMatrix = useMemo(() => toRiskMatrix(weeklyViolations), [weeklyViolations]);
+
+  const totalEvaluations = stats?.total ?? 0;
+  const totalViolations = (stats?.flagged ?? 0) + (stats?.blocked ?? 0) + (stats?.redacted ?? 0);
+  const passRate = totalEvaluations > 0 ? ((stats?.passed ?? 0) / totalEvaluations) * 100 : 0;
+  const resolutionRate = totalViolations > 0 ? (((stats?.blocked ?? 0) + (stats?.redacted ?? 0)) / totalViolations) * 100 : 100;
+  const avgLatency = weeklyViolations.length > 0
+    ? Math.round(weeklyViolations.reduce((sum, item) => sum + item.totalRulesEvaluated, 0) / weeklyViolations.length)
+    : 0;
+
+  const complianceMetrics = [
+    {
+      title: 'Communications Governed (7d)',
+      value: totalEvaluations,
+      trend: statsLoading ? 'Loading…' : `${stats?.passed ?? 0} passed`,
+      trendGood: true,
+      icon: ShieldCheck,
+    },
+    {
+      title: 'Pass Rate',
+      value: `${passRate.toFixed(1)}%`,
+      trend: statsLoading ? 'Loading…' : `${totalViolations} interventions`,
+      trendGood: passRate >= 90,
+      icon: BarChart3,
+    },
+    {
+      title: 'Violations Detected',
+      value: totalViolations,
+      trend: statsLoading ? 'Loading…' : `${stats?.blocked ?? 0} blocked · ${stats?.redacted ?? 0} redacted`,
+      trendGood: totalViolations === 0,
+      icon: AlertTriangle,
+    },
+    {
+      title: 'Enforced Resolution Rate',
+      value: `${resolutionRate.toFixed(0)}%`,
+      trend: statsLoading ? 'Loading…' : `${stats?.flagged ?? 0} flagged pending review`,
+      trendGood: resolutionRate >= 80,
+      icon: CheckCircle,
+    },
+    {
+      title: 'Observed Violation Density',
+      value: avgLatency > 0 ? `${avgLatency}` : '0',
+      trend: statsLoading ? 'Loading…' : 'avg rules evaluated on violations',
+      trendGood: true,
+      icon: Zap,
+    },
+  ];
+
+  const peakRiskRow = riskMatrix.find((row) => row.high > 0 || row.med > 0 || row.low > 0) ?? null;
+  const isLoading = statsLoading || recentAuditsLoading || weeklyAuditsLoading;
+
   return (
     <div className="space-y-4">
-      {/* Row 1: KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        {complianceMetrics.map((m) => (
-          <Card key={m.title} className="clinical-shadow border-border">
+        {complianceMetrics.map((metric) => (
+          <Card key={metric.title} className="clinical-shadow border-border">
             <CardContent className="p-3">
               <div className="flex items-center justify-between mb-1.5">
-                <m.icon className="w-4 h-4 text-muted-foreground" />
-                <span className="flex items-center gap-0.5 text-[10px] font-medium text-success">
-                  <TrendingUp className="w-3 h-3" />
-                  {m.trend}
+                <metric.icon className="w-4 h-4 text-muted-foreground" />
+                <span className={cn(
+                  'flex items-center gap-0.5 text-[10px] font-medium',
+                  metric.trendGood ? 'text-success' : 'text-urgent',
+                )}>
+                  {metric.trendGood ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
+                  {metric.trend}
                 </span>
               </div>
-              <p className="text-2xl font-bold text-foreground tabular-nums">
-                {typeof m.value === 'number' ? m.value.toLocaleString() : m.value}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">{m.title}</p>
+              {isLoading && metric.value === 0 ? (
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground my-1" />
+              ) : (
+                <p className="text-2xl font-bold text-foreground tabular-nums">
+                  {typeof metric.value === 'number' ? metric.value.toLocaleString() : metric.value}
+                </p>
+              )}
+              <p className="text-[11px] text-muted-foreground mt-0.5">{metric.title}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      {/* Row 2: Risk Matrix + Policy Engine */}
       <div className="flex flex-col lg:flex-row gap-4">
-        {/* Risk Matrix */}
         <Card className="clinical-shadow border-border flex-1">
           <CardContent className="p-4">
-            <h2 className="text-sm font-semibold text-foreground mb-3">Risk Heat Map — Last 7 Days</h2>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-1.5 font-medium text-muted-foreground">Severity</th>
-                  <th className="text-center py-1.5 font-medium text-muted-foreground">Low Volume</th>
-                  <th className="text-center py-1.5 font-medium text-muted-foreground">Med Volume</th>
-                  <th className="text-center py-1.5 font-medium text-muted-foreground">High Volume</th>
-                </tr>
-              </thead>
-              <tbody>
-                {riskMatrix.map((row) => (
-                  <tr key={row.severity} className="border-b border-border/50">
-                    <td className="py-2 font-medium text-foreground">{row.severity} Sev.</td>
-                    {[row.low, row.med, row.high].map((val, i) => (
-                      <td key={i} className="text-center py-2">
-                        <span className={cn('inline-block w-10 py-1 rounded text-xs font-bold tabular-nums', cellColor(val, row.severity))}>
-                          {val}
-                        </span>
-                      </td>
+            <h2 className="text-sm font-semibold text-foreground mb-3">Violation Severity Distribution — Last 7 Days</h2>
+            {!weeklyAuditsLoading && weeklyViolations.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8">
+                <p className="text-sm font-medium text-foreground">No severity distribution to show.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Once violations are recorded, this will bucket them by severity and activity volume.
+                </p>
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-1.5 font-medium text-muted-foreground">Severity</th>
+                      <th className="text-center py-1.5 font-medium text-muted-foreground">Low Volume</th>
+                      <th className="text-center py-1.5 font-medium text-muted-foreground">Med Volume</th>
+                      <th className="text-center py-1.5 font-medium text-muted-foreground">High Volume</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {riskMatrix.map((row) => (
+                      <tr key={row.severity} className="border-b border-border/50">
+                        <td className="py-2 font-medium text-foreground">{row.severity} Sev.</td>
+                        {[row.low, row.med, row.high].map((val, idx) => (
+                          <td key={idx} className="text-center py-2">
+                            <span className={cn('inline-block w-10 py-1 rounded text-xs font-bold tabular-nums', cellColor(val, row.severity))}>
+                              {val}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-[11px] text-muted-foreground mt-3">
-              No critical-severity, high-volume risks. Biggest cluster: medium-severity, medium-volume.
-            </p>
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-muted-foreground mt-3">
+                  {peakRiskRow
+                    ? <>Most active severity in the last 7 days: <strong className="text-foreground">{peakRiskRow.severity}</strong>.</>
+                    : <>No violations recorded in the last 7 days.</>}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <PolicyEngineStatus />
       </div>
 
-      {/* Row 3: AI Governance Spotlight — FULL WIDTH */}
-      <Card className="clinical-shadow border-border bg-ehr-part2/3">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Bot className="w-5 h-5 text-ehr-part2" />
-              <h2 className="text-base font-semibold text-foreground">AI Communication Governance</h2>
-            </div>
-            <Badge variant="outline" className="bg-ehr-part2/10 text-ehr-part2 border-ehr-part2/20 text-[10px] gap-1">
-              <TrendingUp className="w-3 h-3" />
-              +340% (90d)
-            </Badge>
-          </div>
-          <p className="text-2xl font-bold text-foreground mb-3 tabular-nums">12,849 <span className="text-sm font-normal text-muted-foreground">AI-generated communications governed today</span></p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div className="text-xs"><span className="text-muted-foreground">Azure OpenAI:</span> <strong className="text-foreground">6,218</strong></div>
-            <div className="text-xs"><span className="text-muted-foreground">Copilot M365:</span> <strong className="text-foreground">4,102</strong></div>
-            <div className="text-xs"><span className="text-muted-foreground">Clinical Agents:</span> <strong className="text-foreground">2,529</strong></div>
-            <div className="text-xs flex items-center gap-3">
-              <span className="text-success">✓ 12,822 passed</span>
-              <span className="text-urgent">⚠ 18 flagged</span>
-              <span className="text-stat">✕ 2 blocked</span>
-              <span className="text-ehr-part2">↺ 7 redacted</span>
-            </div>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-2 text-xs text-muted-foreground">
-            <span>Most Common Flag: <em className="text-foreground">"PHI detected in AI-generated patient summary"</em></span>
-            <span className="hidden sm:inline">·</span>
-            <span>Latest Block: <em className="text-foreground">"Behavioral health data in discharge letter (42 CFR Part 2)"</em></span>
-          </div>
-          <button onClick={() => navigate('/ai-governance')} className="mt-3 text-xs text-primary font-medium hover:underline flex items-center gap-1">
-            View AI Governance Dashboard <ArrowRight className="w-3 h-3" />
-          </button>
-        </CardContent>
-      </Card>
-
-      {/* Row 4: Violations Feed + Heatmap */}
       <div className="flex flex-col lg:flex-row gap-4">
-        {/* Violations Feed */}
         <Card className="clinical-shadow border-border flex-1">
           <CardContent className="p-0">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">Recent Violations & Flags — Last 24h</h2>
-              <button onClick={() => navigate('/live-feed')} className="text-[10px] text-primary font-medium hover:underline">Show all events →</button>
+              <button onClick={() => navigate('/audit-trail')} className="text-[10px] text-primary font-medium hover:underline">Open audit trail →</button>
             </div>
             <div className="max-h-[240px] overflow-y-auto">
-              <table className="w-full text-xs">
-                <tbody>
-                  {recentViolations.map((v, i) => (
-                    <tr key={i} className={cn('border-b border-border/50 hover:bg-muted/30', v.verdict === 'BLOCK' && 'bg-stat/5')}>
-                      <td className="px-3 py-2 font-mono text-muted-foreground w-12">{v.time}</td>
-                      <td className="px-2 py-2 w-16">
-                        <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold', verdictStyle[v.verdict])}>{v.verdict}</span>
-                      </td>
-                      <td className="px-2 py-2 text-foreground w-20">{v.channel}</td>
-                      <td className="px-2 py-2 text-muted-foreground w-14">{v.reg}</td>
-                      <td className="px-2 py-2 text-foreground w-32">{v.who}</td>
-                      <td className="px-2 py-2 text-muted-foreground truncate max-w-[200px]">{v.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {recentAuditsLoading ? (
+                <div className="p-4 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading audit events...
+                </div>
+              ) : recentViolations.length === 0 ? (
+                <div className="p-4 text-xs text-muted-foreground">No flagged, blocked, or redacted events in the last 24 hours.</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <tbody>
+                    {recentViolations.map((violation) => {
+                      const verdict = mapVerdict(violation.complianceState);
+                      return (
+                        <tr key={violation.auditId} className={cn('border-b border-border/50 hover:bg-muted/30', verdict === 'BLOCK' && 'bg-stat/5')}>
+                          <td className="px-3 py-2 font-mono text-muted-foreground w-12">
+                            {new Date(violation.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="px-2 py-2 w-16">
+                            <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold', verdictStyle[verdict])}>{verdict}</span>
+                          </td>
+                          <td className="px-2 py-2 text-foreground w-20">{mapChannel(violation.sourceChannel)}</td>
+                          <td className="px-2 py-2 text-muted-foreground w-14">{violation.engineVersion}</td>
+                          <td className="px-2 py-2 text-foreground w-32">{formatActor(violation)}</td>
+                          <td className="px-2 py-2 text-muted-foreground truncate max-w-[220px]">{formatReason(violation)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        <ViolationHeatmap />
+        <ViolationHeatmap audits={weeklyViolations} />
       </div>
     </div>
   );

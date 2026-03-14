@@ -16,6 +16,9 @@ public class CanonicalMessage
     [MaxLength(200)]
     public string? SenderId { get; set; }
 
+    [MaxLength(200)]
+    public string? SenderDisplayName { get; set; }
+
     [Required, MaxLength(500)]
     public string SenderRawAddress { get; set; } = string.Empty;
 

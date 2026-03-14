@@ -4,6 +4,8 @@ import { getApiAccessToken } from "@/auth/tokenManager";
 export interface ThreadMessageRealtimeEvent {
   threadId: string;
   messageId: string;
+  messageType?: string;
+  auditId?: string;
   content: string;
   senderDisplayName?: string;
   senderEntraUserId?: string;

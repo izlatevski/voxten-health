@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { FhirResourceViewer } from './FhirResourceViewer';
 
 // Only show patient banner on clinical pages
-const CLINICAL_ROUTES = ['/messages', '/patients', '/escalations'];
+const CLINICAL_ROUTES = ['/messages', '/patients'];
 
 export function PatientBanner() {
   const { patient, encounter, connectionStatus, lastSync } = useEHRStore();

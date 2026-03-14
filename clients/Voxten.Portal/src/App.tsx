@@ -7,14 +7,13 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { getApiAccessToken } from "@/auth/tokenManager";
-import { hasAnyRole } from "@/auth/roles";
+import { hasAnyRole, hasPortalAccessRole, isClinicianOnlyUser } from "@/auth/roles";
 import { buildCurrentUser } from "@/auth/currentUser";
 import { useAppStore } from "@/stores/appStore";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Messages from "./pages/Messages";
 import PatientCases from "./pages/PatientCases";
-import Escalations from "./pages/Escalations";
 import ComplianceReports from "./pages/Compliance";
 import RegulatoryCompliance from "./pages/RegulatoryCompliance";
 import EHRIntegration from "./pages/EHRIntegration";
@@ -86,59 +85,70 @@ function RequireRoles({
 
 function ProtectedRoutes() {
   const isAuthenticated = useIsAuthenticated();
+  const currentUser = useAppStore((s) => s.currentUser);
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  const roles = currentUser?.roles ?? [];
+  if (!hasPortalAccessRole(roles)) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  const isClinicianOnly = isClinicianOnlyUser(currentUser);
 
   return (
     <AppLayout>
       <Routes>
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="dashboard" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <Dashboard />} />
         <Route path="messages" element={<Messages />} />
-        <Route path="patients" element={<PatientCases />} />
-        <Route path="escalations" element={<Escalations />} />
-        <Route path="ehr-integration" element={<EHRIntegration />} />
-        <Route path="policy-engine" element={<PolicyEngine />} />
-        <Route path="ai-governance" element={<AIGovernance />} />
-        <Route path="live-feed" element={<LiveFeed />} />
-        <Route path="video-sessions" element={<VideoSessions />} />
-        <Route path="compliance" element={<ComplianceReports />} />
-        <Route path="regulations" element={<RegulatoryCompliance />} />
-        <Route path="audit-trail" element={<AuditTrail />} />
-        <Route path="azure-services" element={<AzureServices />} />
+        <Route path="patients" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <PatientCases />} />
+        <Route path="ehr-integration" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <EHRIntegration />} />
+        <Route path="policy-engine" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <PolicyEngine />} />
+        <Route path="ai-governance" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <AIGovernance />} />
+        <Route path="live-feed" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <LiveFeed />} />
+        <Route path="video-sessions" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <VideoSessions />} />
+        <Route path="compliance" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <ComplianceReports />} />
+        <Route path="regulations" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <RegulatoryCompliance />} />
+        <Route path="audit-trail" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <AuditTrail />} />
+        <Route path="azure-services" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <AzureServices />} />
         <Route
           path="organization"
           element={
+            isClinicianOnly ? <Navigate to="/messages" replace /> : (
             <RequireRoles allowedRoles={["Voxten.Admin", "Voxten.Compliance"]}>
               <Organization />
-            </RequireRoles>
+            </RequireRoles>)
           }
         />
         <Route
           path="security"
           element={
+            isClinicianOnly ? <Navigate to="/messages" replace /> : (
             <RequireRoles allowedRoles={["Voxten.Admin", "Voxten.Security"]}>
               <SecurityAdmin />
-            </RequireRoles>
+            </RequireRoles>)
           }
         />
-        <Route path="data-governance" element={<DataGovernance />} />
+        <Route path="data-governance" element={isClinicianOnly ? <Navigate to="/messages" replace /> : <DataGovernance />} />
         <Route
           path="api-webhooks"
           element={
+            isClinicianOnly ? <Navigate to="/messages" replace /> : (
             <RequireRoles allowedRoles={["Voxten.Admin", "Voxten.Security"]}>
               <ApiWebhooks />
-            </RequireRoles>
+            </RequireRoles>)
           }
         />
         <Route
           path="settings"
           element={
+            isClinicianOnly ? <Navigate to="/messages" replace /> : (
             <RequireRoles allowedRoles={["Voxten.Admin"]}>
               <SettingsPage />
-            </RequireRoles>
+            </RequireRoles>)
           }
         />
-        <Route path="platform" element={<Navigate to="/api-webhooks" replace />} />
-        <Route path="*" element={<Navigate to="dashboard" replace />} />
+        <Route path="platform" element={<Navigate to={isClinicianOnly ? "/messages" : "/api-webhooks"} replace />} />
+        <Route path="*" element={<Navigate to={isClinicianOnly ? "messages" : "dashboard"} replace />} />
       </Routes>
     </AppLayout>
   );

@@ -1,4 +1,4 @@
-import type { RulePackResponse, RuleResponse } from '@/lib/complianceApi';
+import type { PatternLibraryResponse, RulePackResponse, RuleResponse } from '@/lib/complianceApi';
 import type { AnalysisMethod, RuleAction, RuleSeverity } from '@/stores/policyEngineStore';
 
 export interface PolicyPackView extends RulePackResponse {
@@ -14,6 +14,19 @@ export interface PolicyRuleScope {
 export interface PolicyActionDefinition {
   actionType: string;
   channels?: string[];
+}
+
+export interface PolicyPatternDefinition {
+  regex: string;
+  entityType: string;
+  description?: string;
+  flags?: string;
+  confidence?: number;
+}
+
+export interface PolicyPatternLibraryView extends PatternLibraryResponse {
+  patterns: PolicyPatternDefinition[];
+  entityTypes: string[];
 }
 
 export interface PolicyRuleView extends RuleResponse {
@@ -67,6 +80,21 @@ function safeArrayParse(value: string): PolicyActionDefinition[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? parsed as PolicyActionDefinition[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function safePatternArrayParse(value: string): PolicyPatternDefinition[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is PolicyPatternDefinition =>
+          !!item
+          && typeof item === 'object'
+          && typeof (item as PolicyPatternDefinition).regex === 'string'
+          && typeof (item as PolicyPatternDefinition).entityType === 'string')
+      : [];
   } catch {
     return [];
   }
@@ -136,6 +164,16 @@ export function toPolicyRuleView(rule: RuleResponse): PolicyRuleView {
     logic,
     defaultActions: safeArrayParse(rule.defaultActionsJson),
     triggerSummary: deriveTriggerSummary(rule, logic),
+  };
+}
+
+export function toPolicyPatternLibraryView(library: PatternLibraryResponse): PolicyPatternLibraryView {
+  const patterns = safePatternArrayParse(library.patternsJson);
+
+  return {
+    ...library,
+    patterns,
+    entityTypes: Array.from(new Set(patterns.map((pattern) => pattern.entityType))),
   };
 }
 

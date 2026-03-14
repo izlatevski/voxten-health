@@ -54,3 +54,20 @@ public sealed class ThreadMetadataEntity : ITableEntity
     public DateTimeOffset? Timestamp { get; set; }
     public ETag ETag { get; set; }
 }
+
+public sealed class ThreadMessageMetadataEntity : ITableEntity
+{
+    public string PartitionKey { get; set; } = string.Empty; // tenantId|threadId
+    public string RowKey { get; set; } = string.Empty; // messageId
+    public string ThreadId { get; set; } = string.Empty;
+    public string MessageId { get; set; } = string.Empty;
+    public string MessageType { get; set; } = "message";
+    public string Content { get; set; } = string.Empty;
+    public string ComplianceState { get; set; } = "unknown";
+    public string AuditId { get; set; } = string.Empty;
+    public string SenderEntraUserId { get; set; } = string.Empty;
+    public string SenderDisplayName { get; set; } = string.Empty;
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset? Timestamp { get; set; }
+    public ETag ETag { get; set; }
+}

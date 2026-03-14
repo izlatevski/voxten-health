@@ -9,7 +9,10 @@ namespace Voxten.ComplianceApi.Services;
 // In-memory cache of active rules and pattern libraries.
 // Loaded at startup from the read-only SQL connection.
 // Invalidated by POST /api/compliance/cache/invalidate from PortalApi on rule changes.
-public class RuleCache(IDbContextFactory<ComplianceDbContext> dbFactory, ILogger<RuleCache> logger)
+public class RuleCache(
+    IDbContextFactory<ComplianceDbContext> dbFactory,
+    PatternDetectionService patternDetection,
+    ILogger<RuleCache> logger)
 {
     private volatile CacheSnapshot _snapshot = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -40,6 +43,8 @@ public class RuleCache(IDbContextFactory<ComplianceDbContext> dbFactory, ILogger
                 PackRetentionDays = packs.ToDictionary(p => p.Id, p => p.RetentionDays),
                 LoadedAt = DateTime.UtcNow
             };
+
+            patternDetection.ClearCompiledPatterns();
 
             logger.LogInformation("Rule cache loaded: {RuleCount} active rules, {PatternCount} pattern libraries",
                 rules.Count, patterns.Count);

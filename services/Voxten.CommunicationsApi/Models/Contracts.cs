@@ -56,6 +56,7 @@ public sealed class SendChatMessageRequest
 public sealed class SendChatMessageResponse
 {
     public string MessageId { get; set; } = string.Empty;
+    public string AuditId { get; set; } = string.Empty;
     public DateTimeOffset SentAt { get; set; }
     public string ComplianceState { get; set; } = "unknown";
 }
@@ -63,10 +64,13 @@ public sealed class SendChatMessageResponse
 public sealed class ChatThreadMessageItem
 {
     public string Id { get; set; } = string.Empty;
+    public string MessageType { get; set; } = "message";
     public string Content { get; set; } = string.Empty;
     public string? SenderDisplayName { get; set; }
     public string? SenderId { get; set; }
     public DateTimeOffset? CreatedOnUtc { get; set; }
+    public string ComplianceState { get; set; } = "unknown";
+    public string? AuditId { get; set; }
 }
 
 public sealed class SendSmsRequest
@@ -127,4 +131,17 @@ public sealed class ThreadMetadataModel
     public string CreatedByEntraUserId { get; set; } = string.Empty;
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
+}
+
+public sealed class ThreadMessageMetadataModel
+{
+    public string ThreadId { get; set; } = string.Empty;
+    public string MessageId { get; set; } = string.Empty;
+    public string MessageType { get; set; } = "message";
+    public string Content { get; set; } = string.Empty;
+    public string ComplianceState { get; set; } = "unknown";
+    public string AuditId { get; set; } = string.Empty;
+    public string SenderEntraUserId { get; set; } = string.Empty;
+    public string SenderDisplayName { get; set; } = string.Empty;
+    public DateTimeOffset CreatedUtc { get; set; }
 }

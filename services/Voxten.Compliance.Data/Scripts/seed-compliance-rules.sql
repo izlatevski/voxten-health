@@ -29,13 +29,13 @@ USING (VALUES
     N'HIPAA PHI Core Patterns v1',
     N'Detects the 18 HIPAA Safe Harbor PHI identifiers commonly found in clinical communications: SSN, MRN, phone, DOB, insurance ID, email address.',
     N'[
-      {"regex":"\b\d{3}[\-\s]\d{2}[\-\s]\d{4}\b",              "entityType":"SSN",        "description":"Social Security Number (XXX-XX-XXXX)",                    "confidence":0.97},
+      {"regex":"(?<!\d)\d{3}(?:[\-\s]?\d{2}[\-\s]?\d{4})(?!\d)", "entityType":"SSN",        "description":"Social Security Number (formatted or 9 digits)",          "confidence":0.97},
       {"regex":"\bMRN[\-:\s#]*\d{4,10}\b",                                  "entityType":"MRN",        "description":"Medical Record Number",                                    "confidence":0.95, "flags":"i"},
       {"regex":"\b(?:patient|pt)[\s\-#:]*(?:ID|number)[\s:]*\d{4,10}\b", "entityType":"PatientID",  "description":"Patient ID (labelled)",                                    "confidence":0.90, "flags":"i"},
       {"regex":"\b(?:DOB|date of birth|born)[:\s]+\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b", "entityType":"DOB", "description":"Date of Birth",                             "confidence":0.93, "flags":"i"},
-      {"regex":"\b(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b", "entityType":"PhoneNumber", "description":"US Phone Number",           "confidence":0.85},
+      {"regex":"(?<!\d)(?:\+?1[\s.\-]?)?(?:\(\d{3}\)|\d{3})[\s.\-]?\d{3}[\s.\-]?\d{4}(?!\d)", "entityType":"PhoneNumber", "description":"US Phone Number",           "confidence":0.85},
       {"regex":"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",     "entityType":"Email",      "description":"Email Address",                                            "confidence":0.88},
-      {"regex":"\b(?:member\s*(?:ID|#)|policy\s*(?:number|#)|ins(?:urance)?\s*ID)[:\s]*[A-Z0-9]{6,15}\b", "entityType":"InsuranceID", "description":"Health Insurance Member / Policy ID", "confidence":0.88, "flags":"i"},
+      {"regex":"\b(?:member\s*(?:ID|#)|policy\s*(?:number|#)|ins(?:urance)?\s*ID)[:\s]*[A-Z0-9][A-Z0-9\-]{5,19}\b", "entityType":"InsuranceID", "description":"Health Insurance Member / Policy ID", "confidence":0.88, "flags":"i"},
       {"regex":"\b(?:NPI)[:\s]*\d{10}\b",                                       "entityType":"NPI",        "description":"National Provider Identifier",                             "confidence":0.96, "flags":"i"},
       {"regex":"\b(?:DEA)[:\s#]*[A-Z]{2}\d{7}\b",                               "entityType":"DEA",        "description":"DEA Registration Number",                                  "confidence":0.96, "flags":"i"}
     ]',
@@ -46,7 +46,7 @@ USING (VALUES
     N'HIPAA PHI Bulk / Multi-Patient Patterns v1',
     N'Detects messages containing multiple distinct SSNs or MRNs, indicating bulk PHI — a high-risk breach vector.',
     N'[
-      {"regex":"(?:(?:\b\d{3}[\-\s]\d{2}[\-\s]\d{4}\b).*?){2,}", "entityType":"BulkSSN",   "description":"Two or more SSN patterns in a single message",             "confidence":0.98},
+      {"regex":"(?:(?:(?<!\d)\d{3}(?:[\-\s]?\d{2}[\-\s]?\d{4})(?!\d)).*?){2,}", "entityType":"BulkSSN",   "description":"Two or more SSN patterns in a single message",             "confidence":0.98},
       {"regex":"(?:(?:\bMRN[\-:\s#]*\d{4,10}\b).*?){2,}",                    "entityType":"BulkMRN",   "description":"Two or more MRN references in a single message",           "confidence":0.95, "flags":"i"}
     ]',
     GETUTCDATE()
@@ -68,8 +68,8 @@ USING (VALUES
     N'Detects critical lab values and patient safety terminology requiring timely communication per Joint Commission standards.',
     N'[
       {"regex":"\b(?:critical|panic|alert value|life.threatening)\s+(?:result|value|lab|finding)\b",  "entityType":"CriticalResult",  "description":"Critical result language",    "confidence":0.91, "flags":"i"},
-      {"regex":"\b(?:K\+|potassium)\s*(?:of\s*|=\s*|:)?\s*[6-9]\d*(?:\.\d+)?\s*(?:mEq|mmol)",   "entityType":"HyperkalemiaLab", "description":"Critically high potassium",   "confidence":0.95, "flags":"i"},
-      {"regex":"\b(?:troponin|trop)\s*(?:I|T)?\s*(?:of\s*|=\s*|:)?\s*(?:\d+\.?\d*|elevated|positive|high)\b", "entityType":"TroponinElevated", "description":"Elevated troponin",       "confidence":0.89, "flags":"i"},
+      {"regex":"\b(?:K\+|potassium)\s*(?:of\s*|=\s*|:)?\s*[6-9]\d*(?:\.\d+)?(?:\s*(?:mEq|mmol)(?:/L)?)?\b",   "entityType":"HyperkalemiaLab", "description":"Critically high potassium",   "confidence":0.95, "flags":"i"},
+      {"regex":"\b(?:troponin|trop)\s*(?:I|T)?\s*(?:of\s*|=\s*|:)?\s*(?:0\.(?:0[4-9]|\d{2,})|[1-9]\d*(?:\.\d+)?|elevated|positive|high)\b", "entityType":"TroponinElevated", "description":"Elevated troponin",       "confidence":0.89, "flags":"i"},
       {"regex":"\b(?:glucose|BG|blood sugar)\s*(?:of\s*|=\s*|:)?\s*(?:[4-9]\d{2,}|[1-9]\d{3,})\s*(?:mg/dL)?\b", "entityType":"HyperglycemiaCrit", "description":"Critically high glucose",  "confidence":0.88, "flags":"i"},
       {"regex":"\bSTAT\b|\bcode\s+(?:blue|red|stroke|STEMI)\b",               "entityType":"EmergencyKeyword", "description":"Emergency / STAT keyword",     "confidence":0.90, "flags":"i"}
     ]',
@@ -79,7 +79,13 @@ USING (VALUES
 ON tgt.Id = src.Id
 WHEN NOT MATCHED THEN
   INSERT (Id, Name, Description, PatternsJson, CreatedAt)
-  VALUES (src.Id, src.Name, src.Description, src.PatternsJson, src.CreatedAt);
+  VALUES (src.Id, src.Name, src.Description, src.PatternsJson, src.CreatedAt)
+WHEN MATCHED THEN
+  UPDATE SET
+    tgt.Name = src.Name,
+    tgt.Description = src.Description,
+    tgt.PatternsJson = src.PatternsJson,
+    tgt.UpdatedAt = GETUTCDATE();
 
 
 -- ─────────────────────────────────────────────────────────────────────────────

@@ -309,9 +309,11 @@ export default function AuditTrail() {
   const filtered = records.filter((r) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
+    const resolvedActor = r.senderDisplayName ?? '';
     return (
       r.auditId.toLowerCase().includes(q) ||
       (r.senderId ?? '').toLowerCase().includes(q) ||
+      resolvedActor.toLowerCase().includes(q) ||
       (r.threadId ?? '').toLowerCase().includes(q) ||
       r.complianceState.toLowerCase().includes(q)
     );
@@ -487,7 +489,9 @@ export default function AuditTrail() {
                           >
                             <td className="px-3 py-2 font-mono text-muted-foreground text-[10px]">{formatTs(r.createdAt)}</td>
                             <td className="px-3 py-2 font-mono text-foreground text-[10px]">{r.auditId.slice(0, 8)}…</td>
-                            <td className="px-3 py-2 text-foreground font-medium">{r.senderId ? r.senderId.slice(0, 12) + '…' : 'System'}</td>
+                            <td className="px-3 py-2 text-foreground font-medium">
+                              {r.senderDisplayName ?? (r.senderId ? (r.senderId.slice(0, 12) + '…') : 'System')}
+                            </td>
                             <td className="px-3 py-2">
                               <Badge variant="outline" className="text-[9px] h-4 px-1">{r.senderRole ?? '—'}</Badge>
                             </td>

@@ -1,4 +1,5 @@
 import { useAppStore } from '@/stores/appStore';
+import { isClinicianOnlyUser } from '@/auth/roles';
 import { Bell, Search, ChevronDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -16,6 +17,7 @@ function formatRole(role: string): string {
 export function TopBar() {
   const { currentUser } = useAppStore();
   const { instance } = useMsal();
+  const isClinicianOnly = isClinicianOnlyUser(currentUser);
   const displayName = currentUser?.displayName;
   const displayInitials = currentUser?.initials || 'EU';
   const displaySubline = currentUser?.email || currentUser?.jobTitle || 'Authenticated User';
@@ -24,31 +26,43 @@ export function TopBar() {
     <header className="h-12 border-b border-border bg-card flex items-center justify-between px-4 gap-4 sticky top-0 z-20">
       {/* Left: Org + Environment */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        <span className="text-sm font-semibold text-foreground hidden md:block">CommonSpirit Health</span>
-        <Badge variant="outline" className="bg-success/10 text-success border-success/20 text-[10px] gap-1 h-5">
-          <span className="w-1.5 h-1.5 rounded-full bg-success" />
-          PRODUCTION
-        </Badge>
+        <span className="text-sm font-semibold text-foreground hidden md:block">
+          {isClinicianOnly ? 'Secure Messaging' : 'CommonSpirit Health'}
+        </span>
+        {!isClinicianOnly && (
+          <Badge variant="outline" className="bg-success/10 text-success border-success/20 text-[10px] gap-1 h-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-success" />
+            PRODUCTION
+          </Badge>
+        )}
       </div>
 
       {/* Center: Search */}
-      <div className="flex items-center gap-2 bg-muted rounded-md px-3 py-1.5 flex-1 max-w-xl">
-        <Search className="w-4 h-4 text-muted-foreground" />
-        <input
-          type="text"
-          placeholder="Search communications, policies, audit events..."
-          className="bg-transparent text-sm outline-none w-full text-foreground placeholder:text-muted-foreground"
-        />
-      </div>
+      {isClinicianOnly ? (
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-muted-foreground truncate">Your personal clinical threads and care-team conversations.</p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 bg-muted rounded-md px-3 py-1.5 flex-1 max-w-xl">
+          <Search className="w-4 h-4 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search communications, policies, audit events..."
+            className="bg-transparent text-sm outline-none w-full text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         {/* Notifications */}
-        <button className="relative p-2 rounded-md hover:bg-muted transition-colors">
-          <Bell className="w-4 h-4 text-muted-foreground" />
-          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-stat text-stat-foreground text-[10px] font-bold flex items-center justify-center">
-            3
-          </span>
-        </button>
+        {!isClinicianOnly && (
+          <button className="relative p-2 rounded-md hover:bg-muted transition-colors">
+            <Bell className="w-4 h-4 text-muted-foreground" />
+            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-stat text-stat-foreground text-[10px] font-bold flex items-center justify-center">
+              3
+            </span>
+          </button>
+        )}
 
         {/* User Menu with persona switcher */}
         <DropdownMenu>

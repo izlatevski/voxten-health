@@ -32,9 +32,39 @@ function normalizeComplianceState(raw?: string): ComplianceState {
   return "passed";
 }
 
+function formatMessageTimestamp(value?: string | number | Date): string {
+  if (value == null) {
+    return new Date().toLocaleTimeString("en-GB", { hour12: false });
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return new Date().toLocaleTimeString("en-GB", { hour12: false });
+  }
+
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return date.toLocaleTimeString("en-GB", { hour12: false });
+  }
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 interface UseThreadMessagesOptions {
   selectedThreadId: string;
-  onIncomingThreadActivity?: (activity: { threadId: string; content: string }) => void;
+  onIncomingThreadActivity?: (activity: { threadId: string; content: string; complianceState?: string }) => void;
 }
 
 export function useThreadMessages({
@@ -73,22 +103,22 @@ export function useThreadMessages({
     const unique = new Map<string, ThreadUiMessage>();
     for (const item of items) {
       const id = item.id || `remote-${Math.random()}`;
+      const compliance = normalizeComplianceState(item.complianceState);
       const mapped: ThreadUiMessage = {
         id,
         sender: item.senderDisplayName || item.senderId || "Participant",
         role: "Participant",
         content: item.content || "",
         sortTs: item.createdOnUtc ? new Date(item.createdOnUtc).getTime() : Date.now(),
-        timestamp: item.createdOnUtc
-          ? new Date(item.createdOnUtc).toLocaleTimeString("en-GB", { hour12: false })
-          : "",
+        timestamp: formatMessageTimestamp(item.createdOnUtc),
         isAI: false,
         governance: {
-          compliance: "passed",
+          compliance,
           encryption: "AES-256",
           syncStatus: "Synced from Communications API",
-          auditId: item.id || "message",
+          auditId: item.auditId || item.id || "message",
         },
+        type: item.messageType === "blocked" ? "blocked" : "message",
       };
       unique.set(id, mapped);
     }
@@ -133,7 +163,12 @@ export function useThreadMessages({
     });
 
     if (latestNewContent) {
-      onIncomingThreadActivity?.({ threadId, content: latestNewContent });
+      const latestMessage = mapped[mapped.length - 1];
+      onIncomingThreadActivity?.({
+        threadId,
+        content: latestNewContent,
+        complianceState: latestMessage?.governance.compliance,
+      });
     }
   }
 
@@ -198,22 +233,22 @@ export function useThreadMessages({
     let unsubscribe: (() => void) | null = null;
 
     function mapRealtimeEventToMessage(payload: ThreadMessageRealtimeEvent): ThreadUiMessage {
+      const compliance = normalizeComplianceState(payload.complianceState);
       return {
         id: payload.messageId || `realtime-${Date.now()}`,
         sender: payload.senderDisplayName || "Participant",
         role: "Participant",
         content: payload.content || "",
         sortTs: payload.sentAtUtc ? new Date(payload.sentAtUtc).getTime() : Date.now(),
-        timestamp: payload.sentAtUtc
-          ? new Date(payload.sentAtUtc).toLocaleTimeString("en-GB", { hour12: false })
-          : new Date().toLocaleTimeString("en-GB", { hour12: false }),
+        timestamp: formatMessageTimestamp(payload.sentAtUtc),
         isAI: false,
         governance: {
-          compliance: normalizeComplianceState(payload.complianceState),
+          compliance,
           encryption: "AES-256",
           syncStatus: "Live via Communications API",
-          auditId: payload.messageId || "message",
+          auditId: payload.auditId || payload.messageId || "message",
         },
+        type: payload.messageType === "blocked" || compliance === "blocked" ? "blocked" : "message",
       };
     }
 
@@ -235,7 +270,11 @@ export function useThreadMessages({
             };
           });
 
-          onIncomingThreadActivity?.({ threadId: payload.threadId, content: payload.content || "" });
+          onIncomingThreadActivity?.({
+            threadId: payload.threadId,
+            content: payload.content || "",
+            complianceState: payload.complianceState,
+          });
         });
       } catch {
         // Keep the polling fallback active when realtime connect fails.

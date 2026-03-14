@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { Shield, Lock, Paperclip, Send } from "lucide-react";
+import { Shield, Lock, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ComplianceVerdict } from "@/lib/chatApi";
 
 export type ComposeOutcome = {
@@ -14,42 +13,58 @@ export function ComposeArea({
   isSending,
   onSend,
   lastOutcome,
+  variant = "governed",
 }: {
   isSending: boolean;
   onSend: (input: { text: string; channel: string }) => Promise<void>;
   lastOutcome: ComposeOutcome | null;
+  variant?: "governed" | "chat";
 }) {
   const [text, setText] = useState("");
-  const [channel, setChannel] = useState("secure");
 
-  const hasPHI = /\b(mrn|ssn|patient|diagnosis|potassium)\b/i.test(text);
+  const hasPHI = [
+    /(?<!\d)\d{3}(?:[-\s]?\d{2}[-\s]?\d{4})(?!\d)/,
+    /\bMRN[\-:\s#]*\d{4,12}\b/i,
+    /\b(?:DOB|date of birth|born)[:\s]+\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/i,
+    /(?<!\d)(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)/,
+    /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/,
+    /\b(?:member\s*(?:ID|#)|policy\s*(?:number|#)|ins(?:urance)?\s*ID)[:\s]*[A-Z0-9][A-Z0-9\-]{5,19}\b/i,
+  ].some((pattern) => pattern.test(text));
   const hasSUD = /substance use|alcohol use|opioid|SUD/i.test(text);
   const status = hasSUD ? "violation" : hasPHI ? "warning" : "safe";
+  const isChatVariant = variant === "chat";
 
   return (
-    <div className="border-t border-border p-4 bg-card">
-      <div className="flex items-center gap-3 mb-2">
-        <div className="flex items-center gap-1.5">
-          <Shield className={cn("w-3.5 h-3.5", status === "safe" ? "text-success" : status === "warning" ? "text-urgent" : "text-stat")} />
-          <span className={cn("text-[11px] font-medium", status === "safe" ? "text-success" : status === "warning" ? "text-urgent" : "text-stat")}>
-            {status === "safe" ? "Compliant" : status === "warning" ? "Potential PHI detected" : "Policy violation detected"}
-          </span>
-        </div>
+    <div className={cn("border-t border-border bg-card", isChatVariant ? "p-3" : "p-4")}>
+      {!isChatVariant && (
+        <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-1.5">
+            <Shield className={cn("w-3.5 h-3.5", status === "safe" ? "text-success" : status === "warning" ? "text-urgent" : "text-stat")} />
+            <span className={cn("text-[11px] font-medium", status === "safe" ? "text-success" : status === "warning" ? "text-urgent" : "text-stat")}>
+              {status === "safe" ? "Compliant" : status === "warning" ? "Potential PHI detected" : "Policy violation detected"}
+            </span>
+          </div>
 
-        <Select value={channel} onValueChange={setChannel}>
-          <SelectTrigger className="h-6 text-[10px] w-[130px] ml-auto"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="secure" className="text-xs">Secure Message</SelectItem>
-            <SelectItem value="sms" className="text-xs">SMS</SelectItem>
-            <SelectItem value="email" className="text-xs">Email</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div className="flex items-center gap-1">
-          <Lock className="w-3 h-3 text-muted-foreground" />
-          <span className="text-[10px] text-muted-foreground">AES-256 E2E</span>
+          <div className="flex items-center gap-1">
+            <span className="ml-auto text-[10px] text-muted-foreground">Secure message</span>
+            <Lock className="w-3 h-3 text-muted-foreground" />
+            <span className="text-[10px] text-muted-foreground">AES-256 E2E</span>
+          </div>
         </div>
-      </div>
+      )}
+      {isChatVariant && (
+        <div className="mb-2 flex items-center gap-2 px-1">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Secure message
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Shield className={cn("w-3.5 h-3.5", status === "safe" ? "text-success" : status === "warning" ? "text-urgent" : "text-stat")} />
+            <span className={cn("text-[11px]", status === "safe" ? "text-muted-foreground" : status === "warning" ? "text-urgent" : "text-stat")}>
+              {status === "safe" ? "Secure channel" : status === "warning" ? "Potential PHI detected" : "Policy violation detected"}
+            </span>
+          </div>
+        </div>
+      )}
       {lastOutcome && (
         <div
           className={cn(
@@ -71,30 +86,27 @@ export function ComposeArea({
       )}
 
       <div className="flex items-center gap-2">
-        <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-4 py-2.5">
+        <div className={cn("flex-1 flex items-center gap-2 bg-muted rounded-lg", isChatVariant ? "px-3 py-2" : "px-4 py-2.5")}>
           <input
             type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Type a governed message..."
+            placeholder={isChatVariant ? "Type a message..." : "Type a governed message..."}
             className="bg-transparent text-sm outline-none w-full text-foreground placeholder:text-muted-foreground"
             onKeyDown={async (e) => {
               if (e.key !== "Enter" || !text.trim() || isSending) return;
               e.preventDefault();
-              await onSend({ text, channel });
+              await onSend({ text, channel: "secure" });
               setText("");
             }}
           />
         </div>
-        <button className="p-2.5 hover:bg-muted rounded-lg transition-colors text-muted-foreground">
-          <Paperclip className="w-5 h-5" />
-        </button>
         <button
           className="p-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!text.trim() || isSending}
           onClick={async () => {
             if (!text.trim() || isSending) return;
-            await onSend({ text, channel });
+            await onSend({ text, channel: "secure" });
             setText("");
           }}
         >

@@ -192,6 +192,7 @@ public class ComplianceRuleEngine(
                 Direction = request.Direction,
                 Status = MessageStatus.Actioned,
                 SenderId = request.SenderId,
+                SenderDisplayName = request.SenderDisplayName,
                 SenderRawAddress = request.SenderId ?? "unknown",
                 SenderRole = request.SenderRole,
                 RecipientsJson = "[]",

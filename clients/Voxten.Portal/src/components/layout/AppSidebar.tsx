@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { isClinicianOnlyUser } from '@/auth/roles';
 import { useAppStore } from '@/stores/appStore';
-import { useEHRStore } from '@/stores/ehrStore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Radio,
-  AlertTriangle,
   ShieldCheck,
   PanelLeftClose,
   PanelLeft,
@@ -22,10 +21,8 @@ import {
   Building2,
   Lock,
   Joystick,
-  Users,
   ChevronDown,
   ChevronRight,
-  Video,
 } from 'lucide-react';
 
 interface NavItem {
@@ -42,7 +39,6 @@ interface NavGroup {
 
 export function AppSidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser } = useAppStore();
-  const { alerts } = useEHRStore();
   const location = useLocation();
   const navigate = useNavigate();
   const displayName = currentUser?.displayName || 'Entra User';
@@ -50,58 +46,63 @@ export function AppSidebar() {
     ? currentUser.roles[0]
     : currentUser?.jobTitle || 'Authenticated User';
   const displayInitials = currentUser?.initials || 'EU';
-
-  const activeAlerts = alerts.filter((a) => !a.collapsed && !a.acknowledged).length;
+  const isClinicianOnly = isClinicianOnlyUser(currentUser);
 
   const navGroups: NavGroup[] = [
-    {
-      title: 'COMMAND CENTER',
-      items: [
-        { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { path: '/live-feed', label: 'Live Feed', icon: Radio },
-        { path: '/escalations', label: 'Alerts & Escalations', icon: AlertTriangle, badgeCount: activeAlerts },
-      ],
-    },
-    {
-      title: 'GOVERNANCE',
-      items: [
-        { path: '/policy-engine', label: 'Policy Engine', icon: ShieldCheck },
-        { path: '/ai-governance', label: 'AI Governance', icon: Bot },
-      ],
-    },
-    {
-      title: 'COMMUNICATIONS',
-      items: [
-        { path: '/messages', label: 'Governed Threads', icon: MessageSquare, badgeCount: 4 },
-        { path: '/video-sessions', label: 'Video Sessions', icon: Video },
-        { path: '/patients', label: 'Patient Cases', icon: Users },
-      ],
-    },
-    {
-      title: 'COMPLIANCE & AUDIT',
-      items: [
-        { path: '/audit-trail', label: 'Audit Trail', icon: FileSearch },
-        { path: '/compliance', label: 'Reports', icon: BarChart3 },
-        { path: '/regulations', label: 'Regulatory Posture', icon: Scale },
-        { path: '/data-governance', label: 'Data Governance', icon: Database },
-      ],
-    },
-    {
-      title: 'INTEGRATION',
-      items: [
-        { path: '/ehr-integration', label: 'EHR Integration', icon: Activity },
-        { path: '/azure-services', label: 'Azure Services', icon: Server },
-        { path: '/api-webhooks', label: 'API & Webhooks', icon: Webhook },
-      ],
-    },
-    {
-      title: 'ADMINISTRATION',
-      items: [
-        { path: '/organization', label: 'Organization', icon: Building2 },
-        { path: '/security', label: 'Security', icon: Lock },
-        { path: '/settings', label: 'Demo Controls', icon: Joystick },
-      ],
-    },
+    ...(isClinicianOnly ? [
+      {
+        title: 'MESSAGING',
+        items: [
+          { path: '/messages', label: 'My Threads', icon: MessageSquare, badgeCount: 4 },
+        ],
+      },
+    ] : [
+      {
+        title: 'COMMAND CENTER',
+        items: [
+          { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+          { path: '/live-feed', label: 'Live Feed', icon: Radio },
+        ],
+      },
+      {
+        title: 'GOVERNANCE',
+        items: [
+          { path: '/policy-engine', label: 'Policy Engine', icon: ShieldCheck },
+          { path: '/ai-governance', label: 'AI Governance', icon: Bot },
+        ],
+      },
+      {
+        title: 'COMMUNICATIONS',
+        items: [
+          { path: '/messages', label: 'Governed Threads', icon: MessageSquare, badgeCount: 4 },
+        ],
+      },
+      {
+        title: 'COMPLIANCE & AUDIT',
+        items: [
+          { path: '/audit-trail', label: 'Audit Trail', icon: FileSearch },
+          { path: '/compliance', label: 'Reports', icon: BarChart3 },
+          { path: '/regulations', label: 'Regulatory Posture', icon: Scale },
+          { path: '/data-governance', label: 'Data Governance', icon: Database },
+        ],
+      },
+      {
+        title: 'INTEGRATION',
+        items: [
+          { path: '/ehr-integration', label: 'EHR Integration', icon: Activity },
+          { path: '/azure-services', label: 'Azure Services', icon: Server },
+          { path: '/api-webhooks', label: 'API & Webhooks', icon: Webhook },
+        ],
+      },
+      {
+        title: 'ADMINISTRATION',
+        items: [
+          { path: '/organization', label: 'Organization', icon: Building2 },
+          { path: '/security', label: 'Security', icon: Lock },
+          { path: '/settings', label: 'Demo Controls', icon: Joystick },
+        ],
+      },
+    ]),
   ];
 
   const activeGroupIndex = navGroups.findIndex((g) =>
@@ -178,9 +179,7 @@ export function AppSidebar() {
                         {!sidebarCollapsed && item.badgeCount != null && item.badgeCount > 0 && (
                           <span className={cn(
                             'ml-auto w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center flex-shrink-0',
-                            item.path === '/escalations'
-                              ? 'bg-stat text-stat-foreground'
-                              : 'bg-sidebar-ring/20 text-sidebar-ring'
+                            'bg-sidebar-ring/20 text-sidebar-ring'
                           )}>
                             {item.badgeCount}
                           </span>

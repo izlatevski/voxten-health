@@ -8,17 +8,9 @@ namespace Voxten.PortalApi.Services;
 
 public sealed class EntraGraphService(IConfiguration configuration, IHttpClientFactory httpClientFactory)
 {
-
     public async Task<IReadOnlyList<EntraUserSummary>> SearchUsersAsync(string query, int top, CancellationToken ct)
     {
-        var tenantId = Required("Authentication:TenantId");
-        var clientId = Required("Authentication:ClientId");
-        var clientSecret = Required("Authentication:Secret");
-        var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
-
-        var token = await credential.GetTokenAsync(
-            new TokenRequestContext(["https://graph.microsoft.com/.default"]),
-            ct);
+        var token = await GetGraphTokenAsync(ct);
 
         var escaped = EscapeODataLiteral(query.Trim());
         var filter = $"startswith(displayName,'{escaped}') or startswith(userPrincipalName,'{escaped}') or startswith(mail,'{escaped}')";
@@ -53,6 +45,18 @@ public sealed class EntraGraphService(IConfiguration configuration, IHttpClientF
                 JobTitle = u.JobTitle
             })
             .ToList() ?? [];
+    }
+
+    private async Task<AccessToken> GetGraphTokenAsync(CancellationToken ct)
+    {
+        var tenantId = Required("Authentication:TenantId");
+        var clientId = Required("Authentication:ClientId");
+        var clientSecret = Required("Authentication:Secret");
+        var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+
+        return await credential.GetTokenAsync(
+            new TokenRequestContext(["https://graph.microsoft.com/.default"]),
+            ct);
     }
 
     private string Required(string key)

@@ -11,9 +11,9 @@ import { toast } from 'sonner';
 const personaPreview: Record<PersonaId, string> = {
   patricia: 'Shows: Governance metrics dashboard, Live Feed, Policy Engine, Compliance Reports. Hides: Clinical messaging.',
   david: 'Shows: Azure Infrastructure, Security, Data Governance, Sentinel integration. Hides: Clinical messaging.',
-  rivera: 'Shows: Clinical dashboard, Governed Threads, Video Sessions, Patient Cases, EHR Integration.',
+  rivera: 'Shows: Clinical dashboard, Governed Threads, EHR Integration.',
   jordan: 'Shows: Financial services demo tenant (switches all data to Meridian Capital Advisors).',
-  maria: 'Shows: Clinical dashboard (nurse view), Governed Threads, Escalation alerts, Patient Cases.',
+  maria: 'Shows: Clinical dashboard (nurse view), Governed Threads.',
 };
 
 const voxtenServices = [
@@ -114,7 +114,7 @@ export default function SettingsPage() {
               <Button
                 size="sm"
                 className="w-full text-[11px] h-7 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-                onClick={() => toast.error('🔬 Critical Lab Result: K+ 6.8 mEq/L — Martinez, Robert', { description: 'Escalation workflow activated. Navigate to Escalations to view countdown.' })}
+                onClick={() => toast.error('🔬 Critical Lab Result: K+ 6.8 mEq/L — Martinez, Robert', { description: 'Critical event generated for demo purposes. Review the resulting compliance activity in Live Feed.' })}
               >
                 Fire Event
               </Button>
@@ -135,12 +135,12 @@ export default function SettingsPage() {
             <div className="p-3 rounded-lg border border-primary/20 bg-primary/5">
               <p className="text-sm font-semibold text-foreground mb-1">📱 Trigger Off-Channel Detection</p>
               <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">
-                Fires an off-channel SMS reference detection. Shows the Off-Channel workflow in Escalation.
+                Fires an off-channel SMS reference detection. Review the resulting compliance activity in Live Feed.
               </p>
               <Button
                 size="sm"
                 className="w-full text-[11px] h-7"
-                onClick={() => toast.info('📱 Off-Channel Reference Detected', { description: 'SMS reference to patient data found in external message. Navigate to Escalations → Off-Channel workflow.' })}
+                onClick={() => toast.info('📱 Off-Channel Reference Detected', { description: 'SMS reference to patient data found in external message. Review the audit event in Live Feed.' })}
               >
                 Fire Event
               </Button>

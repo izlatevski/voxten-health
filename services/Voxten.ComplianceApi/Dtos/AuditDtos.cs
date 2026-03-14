@@ -24,6 +24,7 @@ public class AuditSummaryDto
     public int TotalRulesEvaluated { get; set; }
     public int ViolationCount { get; set; }
     public string? SenderId { get; set; }
+    public string? SenderDisplayName { get; set; }
     public string? SenderRole { get; set; }
     public string? ThreadId { get; set; }
     public string? SourceChannel { get; set; }

@@ -22,6 +22,16 @@ function mapComplianceState(value: string): ThreadListItem["governance"] {
   return "compliant";
 }
 
+function mergeGovernanceState(
+  current: ThreadListItem["governance"],
+  next: string | undefined,
+): ThreadListItem["governance"] {
+  const incoming = mapComplianceState(next || "passed");
+  if (current === "violation" || incoming === "violation") return "violation";
+  if (current === "flagged" || incoming === "flagged") return "flagged";
+  return "compliant";
+}
+
 function formatRelativeTime(isoValue: string): string {
   const timestamp = new Date(isoValue).getTime();
   if (!Number.isFinite(timestamp)) return "just now";
@@ -72,6 +82,20 @@ export function useThreadList(currentUser: CurrentUser | null) {
   useEffect(() => {
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  const selectThread = useCallback((threadId: string) => {
+    setSelectedThread(threadId);
+    setThreads((prev) =>
+      prev.map((item) =>
+        item.id !== threadId
+          ? item
+          : {
+              ...item,
+              unread: 0,
+            },
+      ),
+    );
+  }, []);
 
   const removeThreadLocally = useCallback((threadId: string) => {
     if (!threadId) return;
@@ -181,7 +205,7 @@ export function useThreadList(currentUser: CurrentUser | null) {
     };
   }, [currentUser?.tenantId, selectedThreadId]);
 
-  const onIncomingThreadActivity = useCallback((activity: { threadId: string; content: string }) => {
+  const onIncomingThreadActivity = useCallback((activity: { threadId: string; content: string; complianceState?: string }) => {
     setThreads((prev) =>
       prev.map((item) =>
         item.id !== activity.threadId
@@ -190,6 +214,8 @@ export function useThreadList(currentUser: CurrentUser | null) {
               ...item,
               preview: activity.content || item.preview,
               lastActivity: "just now",
+              governance: mergeGovernanceState(item.governance, activity.complianceState),
+              flags: mergeGovernanceState(item.governance, activity.complianceState) === "flagged" ? 1 : item.flags,
               unread: selectedThreadIdRef.current === activity.threadId ? item.unread : item.unread + 1,
             },
       ),
@@ -261,7 +287,7 @@ export function useThreadList(currentUser: CurrentUser | null) {
   return {
     threads,
     selectedThread,
-    setSelectedThread,
+    setSelectedThread: selectThread,
     loadingThreads,
     threadParticipants,
     removeParticipantFromThreadLocally,

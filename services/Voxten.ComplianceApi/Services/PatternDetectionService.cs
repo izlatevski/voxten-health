@@ -26,6 +26,14 @@ public class PatternDetectionService(ILogger<PatternDetectionService> logger)
     private readonly Dictionary<string, Regex> _compiledPatterns = [];
     private readonly Lock _compileLock = new();
 
+    public void ClearCompiledPatterns()
+    {
+        lock (_compileLock)
+        {
+            _compiledPatterns.Clear();
+        }
+    }
+
     public PatternDetectionResult Evaluate(string content, PatternLibrary library)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -86,7 +94,7 @@ public class PatternDetectionService(ILogger<PatternDetectionService> logger)
 
     private Regex GetOrCompile(string libraryId, PatternDefinition def)
     {
-        var key = $"{libraryId}:{def.EntityType}";
+        var key = $"{libraryId}:{def.EntityType}:{def.Flags}:{def.Regex}";
         if (_compiledPatterns.TryGetValue(key, out var existing))
             return existing;
 

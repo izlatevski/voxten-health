@@ -12,6 +12,7 @@ public class EvaluationRequest
     public string Content { get; set; } = string.Empty;
 
     public string? SenderId { get; set; }
+    public string? SenderDisplayName { get; set; }
     public string? SenderRole { get; set; }
 
     [Required]

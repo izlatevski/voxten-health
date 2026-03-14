@@ -13,6 +13,7 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
     private readonly TableClient _userThreadIndexTable = BuildTableClient(configuration, "Storage:UserThreadIndexTableName", "UserThreadIndex");
     private readonly TableClient _threadParticipantsTable = BuildTableClient(configuration, "Storage:ThreadParticipantsTableName", "ThreadParticipants");
     private readonly TableClient _threadMetadataTable = BuildTableClient(configuration, "Storage:ThreadMetadataTableName", "ThreadMetadata");
+    private readonly TableClient _threadMessageMetadataTable = BuildTableClient(configuration, "Storage:ThreadMessageMetadataTableName", "ThreadMessageMetadata");
 
     public async Task EnsureTablesAsync(CancellationToken ct)
     {
@@ -20,6 +21,7 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
         await _userThreadIndexTable.CreateIfNotExistsAsync(ct);
         await _threadParticipantsTable.CreateIfNotExistsAsync(ct);
         await _threadMetadataTable.CreateIfNotExistsAsync(ct);
+        await _threadMessageMetadataTable.CreateIfNotExistsAsync(ct);
     }
 
     public async Task UpsertUserIdentityMapAsync(string tenantId, string entraUserId, string acsUserId, CancellationToken ct)
@@ -170,7 +172,7 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
             }
             entity.LastMessagePreview = lastMessagePreview;
             entity.LastMessageAtUtc = lastMessageAtUtc;
-            entity.ComplianceState = complianceState;
+            entity.ComplianceState = MergeComplianceState(entity.ComplianceState, complianceState);
 
             if (!string.IsNullOrWhiteSpace(senderEntraUserId) && !string.Equals(senderEntraUserId, participant.EntraUserId, StringComparison.Ordinal))
             {
@@ -179,6 +181,19 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
 
             await _userThreadIndexTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
         }
+    }
+
+    private static string MergeComplianceState(string? current, string? next)
+    {
+        static int Rank(string? value) => value switch
+        {
+            "blocked" => 3,
+            "redacted" => 2,
+            "flagged" => 2,
+            _ => 1,
+        };
+
+        return Rank(next) > Rank(current) ? (next ?? "passed") : (current ?? "passed");
     }
 
     public async Task DeleteThreadParticipantAsync(string tenantId, string threadId, string entraUserId, CancellationToken ct)
@@ -276,6 +291,113 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
         }
     }
 
+    public async Task UpsertThreadMessageMetadataAsync(
+        string tenantId,
+        string threadId,
+        string messageId,
+        string messageType,
+        string content,
+        string complianceState,
+        string auditId,
+        string? senderEntraUserId,
+        string? senderDisplayName,
+        DateTimeOffset createdUtc,
+        CancellationToken ct)
+    {
+        var partitionKey = BuildThreadMessagesPartitionKey(tenantId, threadId);
+        var entity = new ThreadMessageMetadataEntity
+        {
+            PartitionKey = partitionKey,
+            RowKey = messageId,
+            ThreadId = threadId,
+            MessageId = messageId,
+            MessageType = string.IsNullOrWhiteSpace(messageType) ? "message" : messageType,
+            Content = content,
+            ComplianceState = string.IsNullOrWhiteSpace(complianceState) ? "unknown" : complianceState,
+            AuditId = auditId,
+            SenderEntraUserId = senderEntraUserId ?? string.Empty,
+            SenderDisplayName = senderDisplayName ?? string.Empty,
+            CreatedUtc = createdUtc
+        };
+
+        await _threadMessageMetadataTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+    }
+
+    public async Task<IReadOnlyDictionary<string, ThreadMessageMetadataModel>> GetThreadMessageMetadataAsync(
+        string tenantId,
+        string threadId,
+        IEnumerable<string> messageIds,
+        CancellationToken ct)
+    {
+        var ids = messageIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ids.Length == 0)
+        {
+            return new Dictionary<string, ThreadMessageMetadataModel>(StringComparer.Ordinal);
+        }
+
+        var partitionKey = BuildThreadMessagesPartitionKey(tenantId, threadId);
+        var result = new Dictionary<string, ThreadMessageMetadataModel>(StringComparer.Ordinal);
+
+        foreach (var chunk in ids.Chunk(20))
+        {
+            var rowFilter = string.Join(" or ", chunk.Select(id => $"RowKey eq '{EscapeTableFilterValue(id)}'"));
+            var filter = $"PartitionKey eq '{EscapeTableFilterValue(partitionKey)}' and ({rowFilter})";
+
+            await foreach (var entity in _threadMessageMetadataTable.QueryAsync<ThreadMessageMetadataEntity>(filter: filter, cancellationToken: ct))
+            {
+                result[entity.MessageId] = new ThreadMessageMetadataModel
+                {
+                    ThreadId = entity.ThreadId,
+                    MessageId = entity.MessageId,
+                    MessageType = entity.MessageType,
+                    Content = entity.Content,
+                    ComplianceState = entity.ComplianceState,
+                    AuditId = entity.AuditId,
+                    SenderEntraUserId = entity.SenderEntraUserId,
+                    SenderDisplayName = entity.SenderDisplayName,
+                    CreatedUtc = entity.CreatedUtc
+                };
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<IReadOnlyList<ThreadMessageMetadataModel>> GetSyntheticThreadMessagesAsync(
+        string tenantId,
+        string threadId,
+        int pageSize,
+        CancellationToken ct)
+    {
+        var partitionKey = BuildThreadMessagesPartitionKey(tenantId, threadId);
+        var filter = $"PartitionKey eq '{EscapeTableFilterValue(partitionKey)}' and MessageType ne 'message'";
+        var items = new List<ThreadMessageMetadataModel>();
+
+        await foreach (var entity in _threadMessageMetadataTable.QueryAsync<ThreadMessageMetadataEntity>(filter: filter, cancellationToken: ct))
+        {
+            items.Add(new ThreadMessageMetadataModel
+            {
+                ThreadId = entity.ThreadId,
+                MessageId = entity.MessageId,
+                MessageType = entity.MessageType,
+                Content = entity.Content,
+                ComplianceState = entity.ComplianceState,
+                AuditId = entity.AuditId,
+                SenderEntraUserId = entity.SenderEntraUserId,
+                SenderDisplayName = entity.SenderDisplayName,
+                CreatedUtc = entity.CreatedUtc
+            });
+        }
+
+        return items
+            .OrderByDescending(item => item.CreatedUtc)
+            .Take(pageSize)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<UserThreadIndexItem>> GetUserThreadIndexAsync(string tenantId, string entraUserId, int pageSize, CancellationToken ct)
     {
         var partitionKey = BuildUserThreadsPartitionKey(tenantId, entraUserId);
@@ -308,6 +430,7 @@ public sealed class CommunicationIndexRepository(IConfiguration configuration)
 
     public static string BuildUserThreadsPartitionKey(string tenantId, string entraUserId) => $"{tenantId}|{entraUserId}";
     public static string BuildThreadParticipantsPartitionKey(string tenantId, string threadId) => $"{tenantId}|{threadId}";
+    public static string BuildThreadMessagesPartitionKey(string tenantId, string threadId) => $"{tenantId}|{threadId}";
 
     private static string EscapeTableFilterValue(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 

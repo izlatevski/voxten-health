@@ -98,12 +98,12 @@ USING (VALUES
     N'HIPAA Messaging PHI Patterns v1',
     N'Detects common PHI and patient-linked identifiers typically found in clinical messaging payloads.',
     N'[
-      {"regex":"\\b\\d{3}[\\-\\s]\\d{2}[\\-\\s]\\d{4}\\b", "entityType":"SSN", "description":"Social Security Number", "confidence":0.97},
+      {"regex":"(?<!\\d)\\d{3}(?:[\\-\\s]?\\d{2}[\\-\\s]?\\d{4})(?!\\d)", "entityType":"SSN", "description":"Social Security Number", "confidence":0.97},
       {"regex":"\\bMRN[\\-:\\s#]*\\d{4,12}\\b", "entityType":"MRN", "description":"Medical record number", "confidence":0.95, "flags":"i"},
       {"regex":"\\b(?:DOB|date of birth|born)[:\\s]+\\d{1,2}[/\\-]\\d{1,2}[/\\-]\\d{2,4}\\b", "entityType":"DOB", "description":"Date of birth", "confidence":0.93, "flags":"i"},
       {"regex":"\\b(?:patient|pt)[\\s\\-#:]*(?:ID|number)[\\s:]*\\d{4,12}\\b", "entityType":"PatientID", "description":"Labelled patient identifier", "confidence":0.91, "flags":"i"},
-      {"regex":"\\b(?:member\\s*(?:ID|#)|policy\\s*(?:number|#)|ins(?:urance)?\\s*ID)[:\\s]*[A-Z0-9]{6,15}\\b", "entityType":"InsuranceID", "description":"Insurance member or policy id", "confidence":0.89, "flags":"i"},
-      {"regex":"\\b(?:\\+?1[\\s.\\-]?)?\\(?\\d{3}\\)?[\\s.\\-]\\d{3}[\\s.\\-]\\d{4}\\b", "entityType":"PhoneNumber", "description":"US phone number", "confidence":0.85},
+      {"regex":"\\b(?:member\\s*(?:ID|#)|policy\\s*(?:number|#)|ins(?:urance)?\\s*ID)[:\\s]*[A-Z0-9][A-Z0-9\\-]{5,19}\\b", "entityType":"InsuranceID", "description":"Insurance member or policy id", "confidence":0.89, "flags":"i"},
+      {"regex":"(?<!\\d)(?:\\+?1[\\s.\\-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.\\-]?\\d{3}[\\s.\\-]?\\d{4}(?!\\d)", "entityType":"PhoneNumber", "description":"US phone number", "confidence":0.85},
       {"regex":"\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b", "entityType":"Email", "description":"Email address", "confidence":0.88},
       {"regex":"\\broom[\\s#:-]*\\d{1,4}[A-Z]?\\b", "entityType":"RoomNumber", "description":"Patient room reference", "confidence":0.78, "flags":"i"}
     ]',
@@ -114,7 +114,7 @@ USING (VALUES
     N'HIPAA Messaging Bulk PHI Patterns v1',
     N'Detects likely multi-patient or bulk PHI disclosures in a single communication payload.',
     N'[
-      {"regex":"(?:(?:\\b\\d{3}[\\-\\s]\\d{2}[\\-\\s]\\d{4}\\b).*?){2,}", "entityType":"BulkSSN", "description":"Two or more SSN patterns in one message", "confidence":0.98},
+      {"regex":"(?:(?:(?<!\\d)\\d{3}(?:[\\-\\s]?\\d{2}[\\-\\s]?\\d{4})(?!\\d)).*?){2,}", "entityType":"BulkSSN", "description":"Two or more SSN patterns in one message", "confidence":0.98},
       {"regex":"(?:(?:\\bMRN[\\-:\\s#]*\\d{4,12}\\b).*?){2,}", "entityType":"BulkMRN", "description":"Two or more MRN patterns in one message", "confidence":0.96, "flags":"i"},
       {"regex":"(?:(?:\\b(?:patient|pt)[\\s\\-#:]*(?:ID|number)[\\s:]*\\d{4,12}\\b).*?){2,}", "entityType":"BulkPatientID", "description":"Two or more patient id references in one message", "confidence":0.93, "flags":"i"}
     ]',

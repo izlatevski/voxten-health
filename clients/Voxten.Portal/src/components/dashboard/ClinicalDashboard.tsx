@@ -157,7 +157,6 @@ export function ClinicalDashboard() {
           <CardContent className="p-0">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">Today's Video Sessions</h2>
-              <button onClick={() => navigate('/video-sessions')} className="text-[10px] text-primary font-medium hover:underline">View all →</button>
             </div>
             <div>
               {[

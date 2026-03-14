@@ -61,6 +61,10 @@ namespace Voxten.Compliance.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("SenderDisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<string>("SenderRawAddress")
                         .IsRequired()
                         .HasMaxLength(500)

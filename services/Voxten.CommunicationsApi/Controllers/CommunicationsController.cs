@@ -425,11 +425,13 @@ public sealed class CommunicationsController(
             var senderParticipant = await indexRepository.GetThreadParticipantAsync(tenantId, request.ThreadId, senderEntraUserId, ct);
 
             var complianceSw = Stopwatch.StartNew();
+            var senderDisplayName = request.SenderDisplayName ?? senderParticipant?.DisplayName ?? User.FindFirstValue("name");
             var complianceResult = await complianceClient.EvaluateAsync(new ComplianceEvaluationRequest
             {
                 MessageId = messageId,
                 Content = request.Content,
                 SenderId = senderEntraUserId,
+                SenderDisplayName = senderDisplayName,
                 SenderRole = senderParticipant?.Role,
                 ThreadId = request.ThreadId,
                 Channel = "SecureChat",
@@ -442,6 +444,74 @@ public sealed class CommunicationsController(
 
             if (complianceState == "blocked")
             {
+                var blockedEventId = $"blocked-{complianceResult?.AuditId ?? messageId}";
+                var blockedContent = $"A message from {senderDisplayName ?? "a participant"} was blocked by compliance policy and was not delivered.";
+                try
+                {
+                    var blockedAt = DateTimeOffset.UtcNow;
+                    await Task.WhenAll(
+                        indexRepository.UpsertThreadMessageMetadataAsync(
+                            tenantId,
+                            request.ThreadId,
+                            blockedEventId,
+                            "blocked",
+                            blockedContent,
+                            complianceState,
+                            complianceResult?.AuditId ?? string.Empty,
+                            senderEntraUserId,
+                            senderDisplayName,
+                            blockedAt,
+                            ct),
+                        indexRepository.UpsertUserThreadIndexEntriesAsync(
+                            tenantId,
+                            request.ThreadId,
+                            topic: string.Empty,
+                            lastMessagePreview: BuildMessagePreview(blockedContent),
+                            lastMessageAtUtc: blockedAt,
+                            senderEntraUserId: senderEntraUserId,
+                            complianceState: complianceState,
+                            ct));
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "chat.send blocked metadata persistence failed tenantId={TenantId} threadId={ThreadId} auditId={AuditId}",
+                        tenantId,
+                        request.ThreadId,
+                        complianceResult?.AuditId);
+                }
+
+                try
+                {
+                    await threadsHub.Clients
+                        .Group(ThreadsHub.GroupForThread(request.ThreadId))
+                        .SendAsync(
+                            "messageReceived",
+                            new ThreadMessageRealtimeEvent
+                            {
+                                ThreadId = request.ThreadId,
+                                MessageId = blockedEventId,
+                                MessageType = "blocked",
+                                AuditId = complianceResult?.AuditId ?? string.Empty,
+                                Content = blockedContent,
+                                SenderDisplayName = senderDisplayName,
+                                SenderEntraUserId = senderEntraUserId,
+                                SentAtUtc = DateTimeOffset.UtcNow,
+                                ComplianceState = complianceState
+                            },
+                            ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "chat.send blocked realtime publish failed tenantId={TenantId} threadId={ThreadId} auditId={AuditId}",
+                        tenantId,
+                        request.ThreadId,
+                        complianceResult?.AuditId);
+                }
+
                 totalSw.Stop();
                 logger.LogWarning(
                     "chat.send blocked by compliance tenantId={TenantId} threadId={ThreadId} sender={SenderEntraUserId} auditId={AuditId} rules={Rules} totalMs={TotalMs}",
@@ -470,16 +540,6 @@ public sealed class CommunicationsController(
             acsSw.Stop();
             acsSendMs = acsSw.ElapsedMilliseconds;
 
-            await indexRepository.UpsertUserThreadIndexEntriesAsync(
-                tenantId,
-                request.ThreadId,
-                topic: string.Empty,
-                lastMessagePreview: BuildMessagePreview(request.Content),
-                lastMessageAtUtc: sent.SentAt,
-                senderEntraUserId: senderEntraUserId,
-                complianceState: complianceState,
-                ct);
-
             var signalrSw = Stopwatch.StartNew();
             await threadsHub.Clients
                 .Group(ThreadsHub.GroupForThread(request.ThreadId))
@@ -489,8 +549,10 @@ public sealed class CommunicationsController(
                     {
                         ThreadId = request.ThreadId,
                         MessageId = sent.MessageId,
+                        MessageType = "message",
+                        AuditId = complianceResult?.AuditId ?? string.Empty,
                         Content = request.Content,
-                        SenderDisplayName = request.SenderDisplayName,
+                        SenderDisplayName = senderDisplayName,
                         SenderEntraUserId = senderEntraUserId,
                         SentAtUtc = sent.SentAt,
                         ComplianceState = complianceState
@@ -498,6 +560,41 @@ public sealed class CommunicationsController(
                     ct);
             signalrSw.Stop();
             signalrPublishMs = signalrSw.ElapsedMilliseconds;
+
+            try
+            {
+                await Task.WhenAll(
+                    indexRepository.UpsertThreadMessageMetadataAsync(
+                        tenantId,
+                        request.ThreadId,
+                        sent.MessageId,
+                        "message",
+                        string.Empty,
+                        complianceState,
+                        complianceResult?.AuditId ?? string.Empty,
+                        senderEntraUserId,
+                        senderDisplayName,
+                        sent.SentAt,
+                        ct),
+                    indexRepository.UpsertUserThreadIndexEntriesAsync(
+                        tenantId,
+                        request.ThreadId,
+                        topic: string.Empty,
+                        lastMessagePreview: BuildMessagePreview(request.Content),
+                        lastMessageAtUtc: sent.SentAt,
+                        senderEntraUserId: senderEntraUserId,
+                        complianceState: complianceState,
+                        ct));
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "chat.send persistence failed tenantId={TenantId} threadId={ThreadId} messageId={MessageId}",
+                    tenantId,
+                    request.ThreadId,
+                    sent.MessageId);
+            }
 
             totalSw.Stop();
             logger.LogInformation(
@@ -512,6 +609,7 @@ public sealed class CommunicationsController(
                 signalrPublishMs,
                 totalSw.ElapsedMilliseconds);
 
+            sent.AuditId = complianceResult?.AuditId ?? string.Empty;
             sent.ComplianceState = complianceState;
             return Ok(sent);
         }
@@ -703,12 +801,17 @@ public sealed class CommunicationsController(
             return BadRequest(new { error = "pageSize must be between 1 and 200." });
         }
 
+        var tenantId = GetCallerTenant();
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return Forbid();
+        }
+
         var token = ResolveAcsUserToken();
         if (string.IsNullOrWhiteSpace(token))
         {
-            var tenantId = GetCallerTenant();
             var callerOid = GetCallerOid();
-            if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(callerOid))
+            if (string.IsNullOrWhiteSpace(callerOid))
             {
                 return Forbid();
             }
@@ -723,7 +826,52 @@ public sealed class CommunicationsController(
         try
         {
             var items = await chatService.GetChatMessagesAsync(token, threadId, pageSize, ct);
-            return Ok(new { items });
+            var metadata = await indexRepository.GetThreadMessageMetadataAsync(
+                tenantId,
+                threadId,
+                items.Select(item => item.Id),
+                ct);
+            var syntheticItems = await indexRepository.GetSyntheticThreadMessagesAsync(tenantId, threadId, pageSize, ct);
+
+            foreach (var item in items)
+            {
+                if (metadata.TryGetValue(item.Id, out var messageMetadata))
+                {
+                    item.MessageType = messageMetadata.MessageType;
+                    if (!string.Equals(messageMetadata.MessageType, "message", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(messageMetadata.Content))
+                    {
+                        item.Content = messageMetadata.Content;
+                    }
+                    item.ComplianceState = messageMetadata.ComplianceState;
+                    item.AuditId = messageMetadata.AuditId;
+                    item.SenderDisplayName = !string.IsNullOrWhiteSpace(messageMetadata.SenderDisplayName)
+                        ? messageMetadata.SenderDisplayName
+                        : item.SenderDisplayName;
+                }
+            }
+
+            var merged = items
+                .Concat(syntheticItems.Select(item => new Models.ChatThreadMessageItem
+                {
+                    Id = item.MessageId,
+                    MessageType = item.MessageType,
+                    Content = item.Content,
+                    SenderDisplayName = item.SenderDisplayName,
+                    SenderId = item.SenderEntraUserId,
+                    CreatedOnUtc = item.CreatedUtc,
+                    ComplianceState = item.ComplianceState,
+                    AuditId = item.AuditId
+                }))
+                .OrderBy(item => item.CreatedOnUtc ?? DateTimeOffset.MinValue)
+                .ToList();
+
+            if (merged.Count > pageSize)
+            {
+                merged = merged.Skip(merged.Count - pageSize).ToList();
+            }
+
+            return Ok(new { items = merged });
         }
         catch (Exception ex)
         {

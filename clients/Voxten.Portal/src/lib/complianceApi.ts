@@ -48,6 +48,16 @@ async function complianceGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function compliancePost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetchWithAuth(`${complianceBase()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`ComplianceApi ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<T>;
+}
+
 // ─── Rule Packs ───────────────────────────────────────────────────────────────
 
 export interface RulePackResponse {
@@ -64,8 +74,23 @@ export interface PatternLibraryResponse {
   id: string;
   name: string;
   description?: string;
+  patternsJson: string;
+  patternCount: number;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface CreatePatternLibraryRequest {
+  id: string;
+  name: string;
+  description?: string;
+  patternsJson: string;
+}
+
+export interface UpdatePatternLibraryRequest {
+  name: string;
+  description?: string;
+  patternsJson: string;
 }
 
 export interface CreateRulePackRequest {
@@ -104,6 +129,18 @@ export function togglePack(id: string): Promise<{ id: string; isActive: boolean 
 
 export function listPatternLibraries(): Promise<PatternLibraryResponse[]> {
   return portalGet("/api/compliance/pattern-libraries");
+}
+
+export function getPatternLibrary(id: string): Promise<PatternLibraryResponse> {
+  return portalGet(`/api/compliance/pattern-libraries/${encodeURIComponent(id)}`);
+}
+
+export function createPatternLibrary(req: CreatePatternLibraryRequest): Promise<PatternLibraryResponse> {
+  return portalPost("/api/compliance/pattern-libraries", req);
+}
+
+export function updatePatternLibrary(id: string, req: UpdatePatternLibraryRequest): Promise<PatternLibraryResponse> {
+  return portalPut(`/api/compliance/pattern-libraries/${encodeURIComponent(id)}`, req);
 }
 
 // ─── Rules ────────────────────────────────────────────────────────────────────
@@ -175,6 +212,45 @@ export interface RuleListFilters {
   activeOnly?: boolean;
 }
 
+export type ComplianceChannel = "Email" | "Sms" | "Ehr" | "SecureChat" | "Voice";
+export type ComplianceDirection = "Inbound" | "Outbound" | "Internal";
+
+export interface EvaluateComplianceRequest {
+  messageId: string;
+  content: string;
+  senderId?: string;
+  senderRole?: string;
+  threadId: string;
+  channel: ComplianceChannel;
+  direction: ComplianceDirection;
+  attachmentsMetaJson?: string;
+}
+
+export interface EvaluateComplianceDetectedEntity {
+  entityType: string;
+  confidence: number;
+  ruleId: string;
+  detectionMethod: string;
+}
+
+export interface EvaluateComplianceFiredRule {
+  ruleId: string;
+  ruleName: string;
+  action: string;
+  severity: string;
+}
+
+export interface EvaluateComplianceResponse {
+  auditId: string;
+  verdict: string;
+  complianceState: string;
+  redactedContent?: string;
+  entitiesDetected: EvaluateComplianceDetectedEntity[];
+  rulesFired: EvaluateComplianceFiredRule[];
+  evalMs: number;
+  aiMs?: number;
+}
+
 export function listRules(filters: RuleListFilters = {}): Promise<RuleResponse[]> {
   const params = new URLSearchParams();
   if (filters.packId) params.set("packId", filters.packId);
@@ -182,6 +258,10 @@ export function listRules(filters: RuleListFilters = {}): Promise<RuleResponse[]
   if (filters.activeOnly != null) params.set("activeOnly", String(filters.activeOnly));
   const qs = params.toString();
   return portalGet(`/api/compliance/rules${qs ? `?${qs}` : ""}`);
+}
+
+export function evaluateCompliance(req: EvaluateComplianceRequest): Promise<EvaluateComplianceResponse> {
+  return compliancePost("/api/compliance/evaluate", req);
 }
 
 export function getRule(id: string): Promise<RuleResponse> {
@@ -215,6 +295,7 @@ export interface AuditSummary {
   totalRulesEvaluated: number;
   violationCount: number;
   senderId?: string;
+  senderDisplayName?: string;
   senderRole?: string;
   threadId?: string;
   sourceChannel?: string;

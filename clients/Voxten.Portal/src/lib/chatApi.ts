@@ -40,10 +40,13 @@ export interface ThreadParticipant {
 
 export interface ChatThreadMessageItem {
   id: string;
+  messageType?: string;
   content: string;
   senderDisplayName?: string;
   senderId?: string;
   createdOnUtc?: string;
+  complianceState?: string;
+  auditId?: string;
 }
 
 export interface ThreadMetadata {
@@ -83,6 +86,7 @@ export interface SendChatMessageRequest {
 
 export interface SendChatMessageResponse {
   messageId: string;
+  auditId: string;
   sentAt: string;
   complianceState: ComplianceVerdict;
 }
