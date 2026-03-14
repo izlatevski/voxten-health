@@ -74,7 +74,7 @@ export function AppSidebar() {
       {
         title: 'COMMUNICATIONS',
         items: [
-          { path: '/messages', label: 'Governed Threads', icon: MessageSquare, badgeCount: 4 },
+          { path: '/messages', label: 'Governed Threads', icon: MessageSquare },
         ],
       },
       {

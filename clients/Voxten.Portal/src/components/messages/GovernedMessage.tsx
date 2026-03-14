@@ -19,7 +19,6 @@ export function GovernedMessage({ msg }: { msg: ThreadUiMessage }) {
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <span className="text-[10px] text-muted-foreground font-mono">{msg.timestamp}</span>
               <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-muted border-border text-muted-foreground">VOXTEN System</Badge>
-              <span className="text-[10px] text-muted-foreground font-mono ml-auto">{g.auditId}</span>
             </div>
           </div>
         </div>
@@ -39,7 +38,6 @@ export function GovernedMessage({ msg }: { msg: ThreadUiMessage }) {
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <span className="text-[10px] text-muted-foreground font-mono">{msg.timestamp}</span>
               <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-stat/10 text-stat border-stat/20">BLOCKED</Badge>
-              <span className="text-[10px] text-muted-foreground font-mono ml-auto">{g.auditId}</span>
             </div>
           </div>
         </div>
@@ -119,7 +117,6 @@ export function GovernedMessage({ msg }: { msg: ThreadUiMessage }) {
               Audit Hash: SHA-256
             </span>
           )}
-          <span className="font-mono ml-auto">{g.auditId}</span>
         </div>
       </div>
     </div>

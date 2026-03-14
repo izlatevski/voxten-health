@@ -58,6 +58,16 @@ const channelIcon: Record<string, React.ElementType> = {
   chat: MessageSquare, voice: Activity, email: FileText, ai: Bot,
 };
 
+function isGuidLike(value?: string | null): boolean {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function displayNameOrFallback(value?: string | null, fallback = 'Participant'): string {
+  if (!value?.trim()) return fallback;
+  return isGuidLike(value) ? fallback : value.trim();
+}
+
 /* ── Page ── */
 export default function Messages() {
   const currentUser = useAppStore((s) => s.currentUser);
@@ -142,8 +152,10 @@ export default function Messages() {
             if (event.entraUserId?.toLowerCase() === currentUser?.oid?.toLowerCase()) return;
 
             const removedName =
-              removeParticipantFromThreadLocally(event.threadId, event.entraUserId) ||
-              event.entraUserId;
+              displayNameOrFallback(
+                removeParticipantFromThreadLocally(event.threadId, event.entraUserId),
+                'A participant',
+              );
             const content = `${removedName} left this thread.`;
 
             const marker: ThreadUiMessage = {
@@ -375,12 +387,12 @@ export default function Messages() {
     ? (threadParticipants[thread.id]?.length
       ? threadParticipants[thread.id].map((p) => ({
           key: p.entraUserId,
-          name: p.displayName || p.entraUserId,
+          name: displayNameOrFallback(p.displayName, 'Participant'),
           role: p.role || 'Participant',
         }))
       : thread.participants.map((p) => ({
           key: p.name,
-          name: p.name,
+          name: displayNameOrFallback(p.name, 'Participant'),
           role: p.role,
         })))
     : [];

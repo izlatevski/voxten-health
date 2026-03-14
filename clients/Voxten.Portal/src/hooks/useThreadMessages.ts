@@ -27,6 +27,17 @@ export interface ThreadUiMessage {
 
 type ComplianceState = ThreadUiMessage["governance"]["compliance"];
 
+function isGuidLike(value?: string | null): boolean {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function displaySenderName(displayName?: string | null, senderId?: string | null): string {
+  if (displayName?.trim()) return displayName.trim();
+  if (senderId?.trim() && !isGuidLike(senderId)) return senderId.trim();
+  return "Participant";
+}
+
 function normalizeComplianceState(raw?: string): ComplianceState {
   if (raw === "flagged" || raw === "redacted" || raw === "blocked") return raw;
   return "passed";
@@ -106,7 +117,7 @@ export function useThreadMessages({
       const compliance = normalizeComplianceState(item.complianceState);
       const mapped: ThreadUiMessage = {
         id,
-        sender: item.senderDisplayName || item.senderId || "Participant",
+        sender: displaySenderName(item.senderDisplayName, item.senderId),
         role: "Participant",
         content: item.content || "",
         sortTs: item.createdOnUtc ? new Date(item.createdOnUtc).getTime() : Date.now(),
@@ -236,7 +247,7 @@ export function useThreadMessages({
       const compliance = normalizeComplianceState(payload.complianceState);
       return {
         id: payload.messageId || `realtime-${Date.now()}`,
-        sender: payload.senderDisplayName || "Participant",
+        sender: displaySenderName(payload.senderDisplayName),
         role: "Participant",
         content: payload.content || "",
         sortTs: payload.sentAtUtc ? new Date(payload.sentAtUtc).getTime() : Date.now(),
